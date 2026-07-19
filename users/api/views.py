@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.conf import settings
+from django.core.cache import cache
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from .serializers import RegisterSerializer, UserSerializer
@@ -38,8 +39,13 @@ class LeaderboardView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        players = User.objects.order_by('-wins', '-total_duels')[:10]
-        return Response(UserSerializer(players, many=True).data)
+        cache_key = 'leaderboard_top10'
+        data = cache.get(cache_key)
+        if data is None:
+            players = User.objects.order_by('-wins', '-total_duels')[:10]
+            data = UserSerializer(players, many=True).data
+            cache.set(cache_key, data, 30)
+        return Response(data)
 
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]

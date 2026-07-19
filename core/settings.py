@@ -68,6 +68,7 @@ DATABASES = {
         'PASSWORD': os.getenv('DB_PASSWORD'),
         'HOST': os.getenv('DB_HOST'),
         'PORT': os.getenv('DB_PORT', '5432'),
+        'CONN_MAX_AGE': 600,
         'OPTIONS': {
             'sslmode': os.getenv('DB_SSLMODE', 'require'),
         },
@@ -84,6 +85,7 @@ if DATABASE_URL:
         'PASSWORD': url.password,
         'HOST': url.hostname,
         'PORT': url.port or 5432,
+        'CONN_MAX_AGE': 600,
         'OPTIONS': {
             'sslmode': 'require',
         },
@@ -94,6 +96,17 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+}
+
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': False,
 }
 
 SPECTACULAR_SETTINGS = {
@@ -123,5 +136,12 @@ ASGI_APPLICATION = 'core.asgi.application'
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    }
+}
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'debugduel-cache',
     }
 }
