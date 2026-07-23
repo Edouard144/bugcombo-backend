@@ -33,24 +33,30 @@ class DuelConsumer(AsyncWebsocketConsumer):
             if room:
                 await self.channel_layer.group_send(
                     self.room_group_name,
-                    {
-                        'type': 'room_update',
-                        'status': room['status'],
-                        'code': room['code'],
-                    }
+                    {'type': 'room_update', 'status': room['status']}
                 )
+
+        elif event_type == 'submitted':
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {'type': 'player_submitted', 'player': data.get('player', '')}
+            )
 
     async def room_update(self, event):
         await self.send(text_data=json.dumps({
             'type': 'room_update',
-            'status': event['status'],
-            'code': event['code'],
+            'status': event['status']
+        }))
+
+    async def player_submitted(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'player_submitted',
+            'player': event['player']
         }))
 
     async def duel_judged(self, event):
         await self.send(text_data=json.dumps({
-            'type': 'duel_judged',
-            'results': event['results']
+            'type': 'duel_judged'
         }))
 
     @database_sync_to_async

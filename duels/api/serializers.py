@@ -4,10 +4,16 @@ from users.api.serializers import UserSerializer
 
 class SubmissionSerializer(serializers.ModelSerializer):
     player = UserSerializer(read_only=True)
+    username = serializers.SerializerMethodField()
 
     class Meta:
         model = Submission
-        fields = ['id', 'room', 'player', 'code', 'submitted_at', 'score', 'correctness', 'cleanliness', 'efficiency', 'security', 'ai_feedback', 'is_winner']
+        fields = ['id', 'room', 'player', 'username', 'code', 'submitted_at', 'score', 'correctness', 'cleanliness', 'efficiency', 'security', 'ai_feedback', 'is_winner']
+
+    def get_username(self, obj):
+        if obj.player:
+            return obj.player.username
+        return ''
 
 class DuelRoomSerializer(serializers.ModelSerializer):
     creator = UserSerializer(read_only=True)

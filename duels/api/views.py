@@ -7,9 +7,9 @@ from .serializers import DuelRoomSerializer, SubmissionSerializer
 from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from django.utils import timezone
 import random
 import string
-import hashlib
 import time
 
 _room_cache = {}
@@ -47,7 +47,7 @@ class CreateDuelView(APIView):
             language=language,
             difficulty=difficulty
         )
-        return Response(DuelRoomSerializer(room).data, status=status.HTTP_201_CREATED)
+        return Response({'code': room.code}, status=status.HTTP_201_CREATED)
 
 class JoinDuelView(APIView):
     permission_classes = [IsAuthenticated]
@@ -61,13 +61,14 @@ class JoinDuelView(APIView):
             return Response({'error': 'You cannot join your own room'}, status=status.HTTP_400_BAD_REQUEST)
         room.opponent = request.user
         room.status = 'active'
+        room.started_at = timezone.now()
         room.save()
         invalidate_room_cache(code)
         async_to_sync(channel_layer.group_send)(
             f'duel_{code}',
             {'type': 'room_update', 'status': 'active', 'code': code}
         )
-        return Response(DuelRoomSerializer(room).data)
+        return Response({'ok': True})
 
 class DuelDetailView(APIView):
     permission_classes = [IsAuthenticated]
@@ -94,20 +95,20 @@ class SubmitCodeView(APIView):
         existing = Submission.objects.filter(room=room, player=request.user).first()
         if existing:
             return Response({'error': 'You already submitted'}, status=status.HTTP_400_BAD_REQUEST)
-        submission = Submission.objects.create(
+        Submission.objects.create(
             room=room,
             player=request.user,
             code=request.data.get('code', '')
+        )
+        async_to_sync(channel_layer.group_send)(
+            f'duel_{code}',
+            {'type': 'submitted', 'player': request.user.username}
         )
         submissions = Submission.objects.filter(room=room).select_related('player')
         if submissions.count() == 2:
             room.status = 'judging'
             room.save()
             invalidate_room_cache(code)
-            async_to_sync(channel_layer.group_send)(
-                f'duel_{code}',
-                {'type': 'room_update', 'status': 'judging', 'code': code}
-            )
             subs = list(submissions)
             creator_sub = next(s for s in subs if s.player_id == room.creator_id)
             opponent_sub = next(s for s in subs if s.player_id == room.opponent_id)
@@ -141,11 +142,6 @@ class SubmitCodeView(APIView):
                     is_winner=winner == 'player2',
                 )
 
-                from django.db.models import F
-                DuelRoom.objects.filter(pk=room.pk).update(
-                    creator_total_duels=F('creator__total_duels') + 1,
-                    opponent_total_duels=F('opponent__total_duels') + 1,
-                )
                 if winner == 'player1':
                     room.creator.wins += 1
                     room.opponent.losses += 1
@@ -158,22 +154,21 @@ class SubmitCodeView(APIView):
                 room.opponent.save(update_fields=['losses', 'total_duels'])
 
                 room.status = 'finished'
-                room.save(update_fields=['status'])
+                room.finished_at = timezone.now()
+                room.save(update_fields=['status', 'finished_at'])
                 invalidate_room_cache(code)
 
                 async_to_sync(channel_layer.group_send)(
                     f'duel_{code}',
-                    {
-                        'type': 'duel_judged',
-                        'results': result,
-                    }
+                    {'type': 'duel_judged'}
                 )
             except Exception as e:
                 room.status = 'finished'
-                room.save(update_fields=['status'])
+                room.finished_at = timezone.now()
+                room.save(update_fields=['status', 'finished_at'])
                 invalidate_room_cache(code)
                 return Response({'error': f'Judging failed: {str(e)}'}, status=500)
-        return Response(SubmissionSerializer(submission).data, status=status.HTTP_201_CREATED)
+        return Response({'ok': True})
 
 class RoomSubmissionsView(APIView):
     permission_classes = [IsAuthenticated]
