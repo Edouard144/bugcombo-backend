@@ -45,6 +45,10 @@ class CreateDuelView(APIView):
         language = request.data.get('language', 'python')
         difficulty = request.data.get('difficulty', 'easy')
         buggy_code = request.data.get('buggy_code', '')
+        duration = request.data.get('duration', 180)
+
+        if duration not in (60, 180, 300):
+            return Response({'error': 'Duration must be 60, 180, or 300 seconds'}, status=status.HTTP_400_BAD_REQUEST)
 
         for _ in range(10):
             code = generate_room_code()
@@ -55,6 +59,7 @@ class CreateDuelView(APIView):
                     language=language,
                     difficulty=difficulty,
                     buggy_code=buggy_code,
+                    duration=duration,
                 )
                 return Response({'code': room.code}, status=status.HTTP_201_CREATED)
             except Exception:
@@ -221,3 +226,32 @@ class RoomSubmissionsView(APIView):
             return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
         submissions = Submission.objects.filter(room=room).select_related('player')
         return Response(SubmissionSerializer(submissions, many=True).data)
+
+
+class RematchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, code):
+        try:
+            old_room = DuelRoom.objects.get(code=code)
+        except DuelRoom.DoesNotExist:
+            return Response({'error': 'Original room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.user != old_room.creator and request.user != old_room.opponent:
+            return Response({'error': 'You are not a player in this room'}, status=status.HTTP_403_FORBIDDEN)
+
+        for _ in range(10):
+            new_code = generate_room_code()
+            try:
+                new_room = DuelRoom.objects.create(
+                    creator=request.user,
+                    code=new_code,
+                    language=old_room.language,
+                    difficulty=old_room.difficulty,
+                    buggy_code=old_room.buggy_code,
+                    duration=old_room.duration,
+                )
+                return Response({'code': new_room.code}, status=status.HTTP_201_CREATED)
+            except Exception:
+                continue
+        return Response({'error': 'Failed to generate room code'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
