@@ -9,14 +9,20 @@ from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
+from django.conf import settings
 import random
 import string
 import time
+import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 _room_cache = {}
 _CACHE_TTL = 5
 
-channel_layer = get_channel_layer()
+def get_channel_layer_instance():
+    return get_channel_layer()
 
 def generate_room_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
@@ -46,16 +52,27 @@ class CreateDuelView(APIView):
     def post(self, request):
         language = request.data.get('language', 'python')
         difficulty = request.data.get('difficulty', 'easy')
-        code = generate_room_code()
-        while DuelRoom.objects.filter(code=code).exists():
+        buggy_code = request.data.get('buggy_code', '')
+        duration = request.data.get('duration', 180)
+
+        if duration not in (60, 180, 300):
+            return Response({'error': 'Duration must be 60, 180, or 300 seconds'}, status=status.HTTP_400_BAD_REQUEST)
+
+        for _ in range(10):
             code = generate_room_code()
-        room = DuelRoom.objects.create(
-            creator=request.user,
-            code=code,
-            language=language,
-            difficulty=difficulty
-        )
-        return Response({'code': room.code}, status=status.HTTP_201_CREATED)
+            try:
+                room = DuelRoom.objects.create(
+                    creator=request.user,
+                    code=code,
+                    language=language,
+                    difficulty=difficulty,
+                    buggy_code=buggy_code,
+                    duration=duration,
+                )
+                return Response({'code': room.code}, status=status.HTTP_201_CREATED)
+            except Exception:
+                continue
+        return Response({'error': 'Failed to generate unique room code'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class JoinDuelView(APIView):
     permission_classes = [IsAuthenticated]
@@ -93,6 +110,83 @@ class DuelDetailView(APIView):
             return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
         return Response(DuelRoomSerializer(room).data)
 
+def _run_judging(room_id, code):
+    try:
+        room = DuelRoom.objects.select_related('creator', 'opponent').get(pk=room_id)
+        submissions = list(Submission.objects.filter(room=room).select_related('player'))
+        if len(submissions) != 2:
+            return
+
+        creator_sub = next(s for s in submissions if s.player_id == room.creator_id)
+        opponent_sub = next(s for s in submissions if s.player_id == room.opponent_id)
+
+        result = judge_submissions(
+            buggy_code=room.buggy_code,
+            submission1=creator_sub.code,
+            submission2=opponent_sub.code,
+            language=room.language
+        )
+        winner = result['winner']
+        p1 = result['player1']
+        p2 = result['player2']
+
+        Submission.objects.filter(pk=creator_sub.pk).update(
+            correctness=p1['correctness'],
+            cleanliness=p1['cleanliness'],
+            efficiency=p1['efficiency'],
+            security=p1['security'],
+            score=p1['score'],
+            ai_feedback=p1['feedback'],
+            is_winner=winner == 'player1',
+        )
+        Submission.objects.filter(pk=opponent_sub.pk).update(
+            correctness=p2['correctness'],
+            cleanliness=p2['cleanliness'],
+            efficiency=p2['efficiency'],
+            security=p2['security'],
+            score=p2['score'],
+            ai_feedback=p2['feedback'],
+            is_winner=winner == 'player2',
+        )
+
+        if winner == 'player1':
+            room.creator.wins += 1
+            room.opponent.losses += 1
+        elif winner == 'player2':
+            room.opponent.wins += 1
+            room.creator.losses += 1
+        room.creator.total_duels += 1
+        room.opponent.total_duels += 1
+        room.creator.save(update_fields=['wins', 'losses', 'total_duels'])
+        room.opponent.save(update_fields=['wins', 'losses', 'total_duels'])
+
+        room.status = 'finished'
+        room.finished_at = timezone.now()
+        room.save(update_fields=['status', 'finished_at'])
+        invalidate_room_cache(code)
+
+        channel_layer = get_channel_layer_instance()
+        async_to_sync(channel_layer.group_send)(
+            f'duel_{code}',
+            {'type': 'duel_judged'}
+        )
+    except Exception as e:
+        logger.exception("Judging failed for room %s", code)
+        try:
+            room = DuelRoom.objects.get(pk=room_id)
+            room.status = 'finished'
+            room.finished_at = timezone.now()
+            room.save(update_fields=['status', 'finished_at'])
+            invalidate_room_cache(code)
+            channel_layer = get_channel_layer_instance()
+            async_to_sync(channel_layer.group_send)(
+                f'duel_{code}',
+                {'type': 'duel_judged'}
+            )
+        except Exception:
+            pass
+
+
 class SubmitCodeView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -105,18 +199,26 @@ class SubmitCodeView(APIView):
             return Response({'error': 'Room is not active'}, status=status.HTTP_400_BAD_REQUEST)
         if request.user != room.creator and request.user != room.opponent:
             return Response({'error': 'You are not a player in this room'}, status=status.HTTP_403_FORBIDDEN)
+
+        code_text = request.data.get('code', '').strip()
+        if not code_text:
+            return Response({'error': 'Code cannot be empty'}, status=status.HTTP_400_BAD_REQUEST)
+
         existing = Submission.objects.filter(room=room, player=request.user).first()
         if existing:
             return Response({'error': 'You already submitted'}, status=status.HTTP_400_BAD_REQUEST)
         Submission.objects.create(
             room=room,
             player=request.user,
-            code=request.data.get('code', '')
+            code=code_text
         )
+
+        channel_layer = get_channel_layer_instance()
         async_to_sync(channel_layer.group_send)(
             f'duel_{code}',
             {'type': 'submitted', 'player': request.user.username}
         )
+
         submissions = Submission.objects.filter(room=room).select_related('player')
         if submissions.count() == 2:
             room.status = 'judging'
@@ -210,3 +312,32 @@ class RoomSubmissionsView(APIView):
             return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
         submissions = Submission.objects.filter(room=room).select_related('player')
         return Response(SubmissionSerializer(submissions, many=True).data)
+
+
+class RematchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, code):
+        try:
+            old_room = DuelRoom.objects.get(code=code)
+        except DuelRoom.DoesNotExist:
+            return Response({'error': 'Original room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.user != old_room.creator and request.user != old_room.opponent:
+            return Response({'error': 'You are not a player in this room'}, status=status.HTTP_403_FORBIDDEN)
+
+        for _ in range(10):
+            new_code = generate_room_code()
+            try:
+                new_room = DuelRoom.objects.create(
+                    creator=request.user,
+                    code=new_code,
+                    language=old_room.language,
+                    difficulty=old_room.difficulty,
+                    buggy_code=old_room.buggy_code,
+                    duration=old_room.duration,
+                )
+                return Response({'code': new_room.code}, status=status.HTTP_201_CREATED)
+            except Exception:
+                continue
+        return Response({'error': 'Failed to generate room code'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
