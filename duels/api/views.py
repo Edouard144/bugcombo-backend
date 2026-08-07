@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from duels.models import DuelRoom, Submission
+from notifications.models import Notification
 from .serializers import DuelRoomSerializer, SubmissionSerializer
 from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
@@ -31,6 +32,13 @@ def get_cached_room(code):
 
 def invalidate_room_cache(code):
     _room_cache.pop(code, None)
+
+def send_notification(user, notification_type, message):
+    Notification.objects.create(
+        user=user,
+        type=notification_type,
+        message=message
+    )
 
 class CreateDuelView(APIView):
     permission_classes = [IsAuthenticated]
@@ -64,6 +72,11 @@ class JoinDuelView(APIView):
         room.started_at = timezone.now()
         room.save()
         invalidate_room_cache(code)
+        send_notification(
+            user=room.creator,
+            notification_type='opponent_joined',
+            message=f'{request.user.username} joined your duel room {code}'
+        )
         async_to_sync(channel_layer.group_send)(
             f'duel_{code}',
             {'type': 'room_update', 'status': 'active', 'code': code}
@@ -112,6 +125,12 @@ class SubmitCodeView(APIView):
             subs = list(submissions)
             creator_sub = next(s for s in subs if s.player_id == room.creator_id)
             opponent_sub = next(s for s in subs if s.player_id == room.opponent_id)
+            other_player = room.opponent if request.user == room.creator else room.creator
+            send_notification(
+                user=other_player,
+                notification_type='opponent_submitted',
+                message=f'{request.user.username} submitted their code in room {code}'
+            )
             try:
                 result = judge_submissions(
                     buggy_code=room.buggy_code,
@@ -157,6 +176,17 @@ class SubmitCodeView(APIView):
                 room.finished_at = timezone.now()
                 room.save(update_fields=['status', 'finished_at'])
                 invalidate_room_cache(code)
+
+                send_notification(
+                    user=room.creator,
+                    notification_type='duel_judged',
+                    message=f'Duel {code} has been judged'
+                )
+                send_notification(
+                    user=room.opponent,
+                    notification_type='duel_judged',
+                    message=f'Duel {code} has been judged'
+                )
 
                 async_to_sync(channel_layer.group_send)(
                     f'duel_{code}',
