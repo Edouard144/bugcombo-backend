@@ -12,6 +12,7 @@ def health_check(request):
         'status': 'ok',
         'project': 'DebugDuel Backend',
         'version': '1.0.0',
+        'api_version': 'v1',
         'checks': {},
     }
 
@@ -36,16 +37,22 @@ def health_check(request):
 
     return Response(health)
 
+api_v1_patterns = [
+    path('auth/', include('users.api.urls')),
+    path('duels/', include('duels.api.urls')),
+    path('bugs/', include('bugs.api.urls')),
+    path('chat/', include('chat.api.urls')),
+    path('notifications/', include('notifications.api.urls')),
+    path('achievements/', include('achievements.api.urls')),
+    path('audit/', include('audit.api.urls')),
+    path('metrics/', MetricsView.as_view(), name='metrics'),
+]
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/health/', health_check),
-    path('api/auth/', include('users.api.urls')),
-    path('api/duels/', include('duels.api.urls')),
-    path('api/bugs/', include('bugs.api.urls')),
-    path('api/chat/', include('chat.api.urls')),
-    path('api/notifications/', include('notifications.api.urls')),
-    path('api/achievements/', include('achievements.api.urls')),
-    path('api/metrics/', MetricsView.as_view(), name='metrics'),
+    path('api/v1/', include(api_v1_patterns)),
+    path('api/', include(api_v1_patterns)),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
