@@ -1,6 +1,6 @@
 import logging
-from django.core.mail import send_mail
 from django.conf import settings
+from django.core.mail import send_mail
 from notifications.models import Notification
 
 logger = logging.getLogger(__name__)
@@ -18,28 +18,33 @@ def send_notification(user, notification_type, message):
 
 
 def send_achievement_unlocked_email(user, achievement_name):
-    """Send email when user unlocks an achievement."""
     if not user.email:
         return
-    subject = f"Achievement Unlocked: {achievement_name}"
-    message = (
-        f"Hi {user.username},\n\n"
-        f"Congratulations! You've unlocked the achievement: {achievement_name}.\n\n"
-        f"Keep dueling to earn more!\n\n"
-        f"— DebugDuel Team"
-    )
-    send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [user.email], fail_silently=True)
+    subject = f'Achievement unlocked: {achievement_name}'
+    message = f'Congratulations {user.username}! You unlocked the achievement: {achievement_name}'
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@debugduel.com'),
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
+    except Exception:
+        logger.exception("Failed to send achievement email to %s", user.email)
 
 
-def send_duel_judged_email(user, room_code, message_text):
-    """Send email after a duel is judged."""
+def send_duel_judged_email(user, room_code, message):
     if not user.email:
         return
-    subject = f"Duel {room_code} — Judged!"
-    message = (
-        f"Hi {user.username},\n\n"
-        f"{message_text}\n\n"
-        f"View your results at {settings.FRONTEND_URL}/results/{room_code}\n\n"
-        f"— DebugDuel Team"
-    )
-    send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [user.email], fail_silently=True)
+    subject = f'Your duel {room_code} has been judged'
+    try:
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@debugduel.com'),
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
+    except Exception:
+        logger.exception("Failed to send duel judged email to %s", user.email)
