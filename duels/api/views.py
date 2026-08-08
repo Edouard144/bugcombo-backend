@@ -10,7 +10,8 @@ from asgiref.sync import async_to_sync
 from django.utils import timezone
 from users.models import User
 from achievements.models import Achievement
-from notifications.services import send_notification
+from notifications.services import send_notification, send_achievement_unlocked_email
+from core.permissions import IsDuelParticipant
 import random
 import string
 import time
@@ -206,7 +207,7 @@ def _run_judging(room_id, code):
 
 
 class SubmitCodeView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsDuelParticipant]
 
     def post(self, request, code):
         try:
@@ -215,8 +216,6 @@ class SubmitCodeView(APIView):
             return Response({'error': 'Active room not found'}, status=status.HTTP_404_NOT_FOUND)
         if room.status != 'active':
             return Response({'error': 'Room is not active'}, status=status.HTTP_400_BAD_REQUEST)
-        if request.user != room.creator and request.user != room.opponent:
-            return Response({'error': 'You are not a player in this room'}, status=status.HTTP_403_FORBIDDEN)
 
         code_text = request.data.get('code', '').strip()
         if not code_text:
@@ -288,13 +287,14 @@ class SubmitCodeView(APIView):
                     room.creator.last_win_at = timezone.now()
                     room.opponent.losses += 1
                     room.opponent.current_streak = 0
-                else:
+                elif winner == 'player2':
                     room.opponent.wins += 1
                     room.opponent.current_streak += 1
                     room.opponent.best_streak = max(room.opponent.best_streak, room.opponent.current_streak)
                     room.opponent.last_win_at = timezone.now()
                     room.creator.losses += 1
                     room.creator.current_streak = 0
+                # tie: neither player gets a win/loss, streaks unchanged
                 room.creator.total_duels += 1
                 room.opponent.total_duels += 1
                 room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
@@ -346,7 +346,7 @@ class RoomSubmissionsView(APIView):
 
 
 class RematchView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsDuelParticipant]
 
     def post(self, request, code):
         try:
@@ -354,8 +354,7 @@ class RematchView(APIView):
         except DuelRoom.DoesNotExist:
             return Response({'error': 'Original room not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        if request.user != old_room.creator and request.user != old_room.opponent:
-            return Response({'error': 'You are not a player in this room'}, status=status.HTTP_403_FORBIDDEN)
+        self.check_object_permissions(request, old_room)
 
         for _ in range(10):
             new_code = generate_room_code()
@@ -375,7 +374,7 @@ class RematchView(APIView):
 
 
 class MatchDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsDuelParticipant]
 
     def get(self, request, code):
         try:
@@ -383,7 +382,6 @@ class MatchDetailView(APIView):
         except DuelRoom.DoesNotExist:
             return Response({'error': 'Match not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        if request.user != room.creator and request.user != room.opponent:
-            return Response({'error': 'You are not a player in this match'}, status=status.HTTP_403_FORBIDDEN)
+        self.check_object_permissions(request, room)
 
         return Response(MatchDetailSerializer(room).data)
