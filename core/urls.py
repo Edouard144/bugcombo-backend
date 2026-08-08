@@ -13,7 +13,7 @@ urlpatterns = [
     path('api/health/', health_check),
     path('api/auth/', include('users.api.urls')),
     path('api/duels/', include('duels.api.urls')),
-    path('api/notifications/', include('notifications.api.urls')),
+    path('api/bugs/', include('bugs.api.urls')),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
