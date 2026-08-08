@@ -23,6 +23,8 @@ class Bug(models.Model):
     starter_code = models.TextField(blank=True)
     test_cases = models.JSONField(default=list, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='created_bugs')
+    times_used = models.IntegerField(default=0)
+    avg_score = models.FloatField(default=0.0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
