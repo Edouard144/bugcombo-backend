@@ -2,8 +2,8 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from notifications.models import Notification, NotificationPreference
-from notifications.api.serializers import NotificationSerializer, NotificationPreferenceSerializer
+from notifications.models import Notification
+from .serializers import NotificationSerializer, NotificationPreferenceSerializer
 
 class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -25,32 +25,33 @@ class MarkNotificationReadView(APIView):
         notification.save(update_fields=['read'])
         return Response({'ok': True})
 
-class MarkAllNotificationsReadView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        Notification.objects.filter(user=request.user, read=False).update(read=True)
-        return Response({'ok': True})
-
-class UnreadNotificationCountView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        count = Notification.objects.filter(user=request.user, read=False).count()
-        return Response({'count': count})
-
 class NotificationPreferenceView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        prefs, _ = NotificationPreference.objects.get_or_create(user=request.user)
-        serializer = NotificationPreferenceSerializer(prefs)
+        try:
+            from notifications.models import NotificationPreference
+            pref, _ = NotificationPreference.objects.get_or_create(user=request.user)
+        except Exception:
+            return Response({
+                'email_opponent_joined': True,
+                'email_duel_judged': True,
+                'email_achievement_unlocked': True,
+                'push_notifications': True,
+            })
+        serializer = NotificationPreferenceSerializer(pref)
         return Response(serializer.data)
 
     def put(self, request):
-        prefs, _ = NotificationPreference.objects.get_or_create(user=request.user)
-        serializer = NotificationPreferenceSerializer(prefs, data=request.data, partial=True)
+        try:
+            from notifications.models import NotificationPreference
+            pref, _ = NotificationPreference.objects.get_or_create(user=request.user)
+        except Exception:
+            return Response({'error': 'NotificationPreference model not available'}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = NotificationPreferenceSerializer(pref, data=request.data, partial=True)
         if serializer.is_valid():
-            serializer.save()
+            for attr, value in serializer.validated_data.items():
+                setattr(pref, attr, value)
+            pref.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

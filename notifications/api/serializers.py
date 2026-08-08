@@ -6,7 +6,8 @@ class NotificationSerializer(serializers.ModelSerializer):
         model = Notification
         fields = ['id', 'type', 'message', 'read', 'created_at']
 
-class NotificationPreferenceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = NotificationPreference
-        fields = ['opponent_joined', 'opponent_submitted', 'duel_judged', 'achievement_unlocked', 'email_notifications']
+class NotificationPreferenceSerializer(serializers.Serializer):
+    email_opponent_joined = serializers.BooleanField(default=True)
+    email_duel_judged = serializers.BooleanField(default=True)
+    email_achievement_unlocked = serializers.BooleanField(default=True)
+    push_notifications = serializers.BooleanField(default=True)
