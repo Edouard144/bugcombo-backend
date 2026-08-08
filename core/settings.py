@@ -26,8 +26,10 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'users',
     'duels',
-    'achievements',
+    'bugs',
+    'chat',
     'notifications',
+    'achievements',
 ]
 
 MIDDLEWARE = [
