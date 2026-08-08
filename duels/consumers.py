@@ -3,6 +3,7 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from duels.models import DuelRoom, Submission
 
+
 class DuelConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.room_code = self.scope['url_route']['kwargs']['room_code']
@@ -48,6 +49,22 @@ class DuelConsumer(AsyncWebsocketConsumer):
                 {'type': 'player_submitted', 'player': data.get('player', '')}
             )
 
+        elif event_type == 'chat_message':
+            message = data.get('message', '').strip()
+            if message and len(message) <= 500:
+                msg_data = await self.save_chat_message(message)
+                if msg_data:
+                    await self.channel_layer.group_send(
+                        self.room_group_name,
+                        {
+                            'type': 'chat_broadcast',
+                            'message': msg_data['message'],
+                            'username': msg_data['username'],
+                            'sender_id': msg_data['sender_id'],
+                            'created_at': msg_data['created_at'],
+                        }
+                    )
+
     async def room_update(self, event):
         await self.send(text_data=json.dumps({
             'type': 'room_update',
@@ -65,6 +82,15 @@ class DuelConsumer(AsyncWebsocketConsumer):
             'type': 'duel_judged'
         }))
 
+    async def chat_broadcast(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'chat_message',
+            'message': event['message'],
+            'username': event['username'],
+            'sender_id': event['sender_id'],
+            'created_at': event['created_at'],
+        }))
+
     @database_sync_to_async
     def get_room(self, code):
         try:
@@ -72,3 +98,18 @@ class DuelConsumer(AsyncWebsocketConsumer):
             return {'status': room.status, 'code': room.code}
         except DuelRoom.DoesNotExist:
             return None
+
+    @database_sync_to_async
+    def save_chat_message(self, message):
+        from chat.models import ChatMessage
+        msg = ChatMessage.objects.create(
+            room_code=self.room_code,
+            sender=self.user,
+            message=message,
+        )
+        return {
+            'message': msg.message,
+            'username': self.user.username,
+            'sender_id': str(self.user.id),
+            'created_at': msg.created_at.isoformat(),
+        }
