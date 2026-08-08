@@ -27,7 +27,6 @@ INSTALLED_APPS = [
     'users',
     'duels',
     'bugs',
-    'chat',
     'notifications',
     'achievements',
     'audit',
@@ -41,6 +40,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'core.middleware.RequestMetricsMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'core.middleware.RequestLoggingMiddleware',
@@ -176,6 +176,13 @@ if not DEBUG:
 ASGI_APPLICATION = 'core.asgi.application'
 
 REDIS_URL = os.getenv('REDIS_URL')
+
+CELERY_BROKER_URL = REDIS_URL or 'redis://localhost:6379/0'
+CELERY_RESULT_BACKEND = REDIS_URL or 'redis://localhost:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
 
 if REDIS_URL:
     CHANNEL_LAYERS = {
