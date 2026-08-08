@@ -10,6 +10,7 @@ from asgiref.sync import async_to_sync
 from django.utils import timezone
 from users.models import User
 from achievements.models import Achievement
+from notifications.services import send_notification
 import random
 import string
 import time
@@ -100,6 +101,7 @@ class JoinDuelView(APIView):
             notification_type='opponent_joined',
             message=f'{request.user.username} joined your duel room {code}'
         )
+        channel_layer = get_channel_layer_instance()
         async_to_sync(channel_layer.group_send)(
             f'duel_{code}',
             {'type': 'room_update', 'status': 'active', 'code': code}
