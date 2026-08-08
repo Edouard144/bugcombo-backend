@@ -3,6 +3,7 @@ from django.urls import path, include
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from core.views import MetricsView
 
 @api_view(['GET'])
 def health_check(request):
@@ -14,7 +15,6 @@ def health_check(request):
         'checks': {},
     }
 
-    # Database check
     try:
         django.db.connection.ensure_connection()
         health['checks']['database'] = 'ok'
@@ -22,7 +22,6 @@ def health_check(request):
         health['checks']['database'] = f'error: {str(e)}'
         health['status'] = 'degraded'
 
-    # Redis check
     try:
         from django.core.cache import cache
         cache.set('health_check', 'ok', 10)
@@ -46,6 +45,7 @@ urlpatterns = [
     path('api/chat/', include('chat.api.urls')),
     path('api/notifications/', include('notifications.api.urls')),
     path('api/achievements/', include('achievements.api.urls')),
+    path('api/metrics/', MetricsView.as_view(), name='metrics'),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
