@@ -2,20 +2,30 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import Q
+from django.db.models import Q, Count
+from django.utils import timezone
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from duels.models import DuelRoom, Submission
 from .serializers import RegisterSerializer, UserSerializer, MatchHistorySerializer, ProfileStatsSerializer
+import hashlib
 
 User = get_user_model()
 
+class RegisterThrottle(AnonRateThrottle):
+    rate = '5/hour'
+
+class GoogleLoginThrottle(AnonRateThrottle):
+    rate = '10/hour'
+
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [RegisterThrottle]
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
@@ -49,8 +59,36 @@ class LeaderboardView(APIView):
             cache.set(cache_key, data, 30)
         return Response(data)
 
+class SeasonalLeaderboardView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        now = timezone.now()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        seasonal_winners = Submission.objects.filter(
+            room__status='finished',
+            room__finished_at__gte=month_start,
+            is_winner=True
+        ).values('player').annotate(
+            seasonal_wins=Count('id')
+        ).order_by('-seasonal_wins')[:10]
+
+        leaderboard = []
+        for entry in seasonal_winners:
+            user = User.objects.get(pk=entry['player'])
+            leaderboard.append({
+                'id': user.id,
+                'username': user.username,
+                'seasonal_wins': entry['seasonal_wins'],
+                'total_duels': user.total_duels,
+                'current_streak': user.current_streak,
+                'best_streak': user.best_streak,
+            })
+        return Response(leaderboard)
+
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [GoogleLoginThrottle]
 
     def post(self, request):
         token = request.data.get('token')
@@ -61,14 +99,17 @@ class GoogleLoginView(APIView):
             idinfo = id_token.verify_oauth2_token(token, requests.Request(), settings.GOOGLE_CLIENT_ID)
             email = idinfo['email']
             name = idinfo.get('name', '')
-            picture = idinfo.get('picture', '')
         except Exception:
             return Response({'error': 'Invalid Google token'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        suffix = hashlib.md5(email.encode()).hexdigest()[:6]
+        base_username = name.replace(' ', '_').lower() or email.split('@')[0]
+        username = f"{base_username}_{suffix}"
 
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
-                'username': name.replace(' ', '_').lower() + str(hash(email) % 10000),
+                'username': username,
                 'bio': f'Google user: {name}',
             }
         )

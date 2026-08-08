@@ -3,13 +3,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from duels.models import DuelRoom, Submission
-from notifications.models import Notification
-from .serializers import DuelRoomSerializer, SubmissionSerializer
+from .serializers import DuelRoomSerializer, SubmissionSerializer, MatchDetailSerializer
 from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
-from django.conf import settings
+from users.models import User
+from achievements.models import Achievement
+from notifications.services import send_notification
 import random
 import string
 import time
@@ -39,12 +40,20 @@ def get_cached_room(code):
 def invalidate_room_cache(code):
     _room_cache.pop(code, None)
 
-def send_notification(user, notification_type, message):
-    Notification.objects.create(
-        user=user,
-        type=notification_type,
-        message=message
-    )
+def award_achievements(user):
+    conditions = []
+    if user.wins >= 1:
+        conditions.append('first_win')
+    if user.wins >= 10:
+        conditions.append('ten_wins')
+    if user.total_duels >= 100:
+        conditions.append('hundred_duels')
+
+    achievements = Achievement.objects.filter(condition__in=conditions)
+    for achievement in achievements:
+        if not user.achievements.filter(pk=achievement.pk).exists():
+            user.achievements.add(achievement)
+            send_achievement_unlocked_email(user, achievement.name)
 
 class CreateDuelView(APIView):
     permission_classes = [IsAuthenticated]
@@ -94,6 +103,7 @@ class JoinDuelView(APIView):
             notification_type='opponent_joined',
             message=f'{request.user.username} joined your duel room {code}'
         )
+        channel_layer = get_channel_layer_instance()
         async_to_sync(channel_layer.group_send)(
             f'duel_{code}',
             {'type': 'room_update', 'status': 'active', 'code': code}
@@ -151,14 +161,22 @@ def _run_judging(room_id, code):
 
         if winner == 'player1':
             room.creator.wins += 1
+            room.creator.current_streak += 1
+            room.creator.best_streak = max(room.creator.best_streak, room.creator.current_streak)
+            room.creator.last_win_at = timezone.now()
             room.opponent.losses += 1
+            room.opponent.current_streak = 0
         elif winner == 'player2':
             room.opponent.wins += 1
+            room.opponent.current_streak += 1
+            room.opponent.best_streak = max(room.opponent.best_streak, room.opponent.current_streak)
+            room.opponent.last_win_at = timezone.now()
             room.creator.losses += 1
+            room.creator.current_streak = 0
         room.creator.total_duels += 1
         room.opponent.total_duels += 1
-        room.creator.save(update_fields=['wins', 'losses', 'total_duels'])
-        room.opponent.save(update_fields=['wins', 'losses', 'total_duels'])
+        room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
+        room.opponent.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
 
         room.status = 'finished'
         room.finished_at = timezone.now()
@@ -265,14 +283,25 @@ class SubmitCodeView(APIView):
 
                 if winner == 'player1':
                     room.creator.wins += 1
+                    room.creator.current_streak += 1
+                    room.creator.best_streak = max(room.creator.best_streak, room.creator.current_streak)
+                    room.creator.last_win_at = timezone.now()
                     room.opponent.losses += 1
+                    room.opponent.current_streak = 0
                 else:
                     room.opponent.wins += 1
+                    room.opponent.current_streak += 1
+                    room.opponent.best_streak = max(room.opponent.best_streak, room.opponent.current_streak)
+                    room.opponent.last_win_at = timezone.now()
                     room.creator.losses += 1
+                    room.creator.current_streak = 0
                 room.creator.total_duels += 1
                 room.opponent.total_duels += 1
-                room.creator.save(update_fields=['wins', 'total_duels'])
-                room.opponent.save(update_fields=['losses', 'total_duels'])
+                room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
+                room.opponent.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
+
+                award_achievements(room.creator)
+                award_achievements(room.opponent)
 
                 room.status = 'finished'
                 room.finished_at = timezone.now()
@@ -284,11 +313,13 @@ class SubmitCodeView(APIView):
                     notification_type='duel_judged',
                     message=f'Duel {code} has been judged'
                 )
+                send_duel_judged_email(room.creator, code, 'Your duel has been judged')
                 send_notification(
                     user=room.opponent,
                     notification_type='duel_judged',
                     message=f'Duel {code} has been judged'
                 )
+                send_duel_judged_email(room.opponent, code, 'Your duel has been judged')
 
                 async_to_sync(channel_layer.group_send)(
                     f'duel_{code}',
@@ -341,3 +372,18 @@ class RematchView(APIView):
             except Exception:
                 continue
         return Response({'error': 'Failed to generate room code'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class MatchDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, code):
+        try:
+            room = DuelRoom.objects.select_related('creator', 'opponent').get(code=code)
+        except DuelRoom.DoesNotExist:
+            return Response({'error': 'Match not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.user != room.creator and request.user != room.opponent:
+            return Response({'error': 'You are not a player in this match'}, status=status.HTTP_403_FORBIDDEN)
+
+        return Response(MatchDetailSerializer(room).data)
