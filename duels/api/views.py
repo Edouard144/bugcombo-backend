@@ -8,6 +8,8 @@ from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
+from users.models import User
+from achievements.models import Achievement
 import random
 import string
 import time
@@ -31,6 +33,19 @@ def get_cached_room(code):
 
 def invalidate_room_cache(code):
     _room_cache.pop(code, None)
+
+def award_achievements(user):
+    conditions = []
+    if user.wins >= 1:
+        conditions.append('first_win')
+    if user.wins >= 10:
+        conditions.append('ten_wins')
+    if user.total_duels >= 100:
+        conditions.append('hundred_duels')
+
+    achievements = Achievement.objects.filter(condition__in=conditions)
+    for achievement in achievements:
+        user.achievements.add(achievement)
 
 class CreateDuelView(APIView):
     permission_classes = [IsAuthenticated]
@@ -152,6 +167,9 @@ class SubmitCodeView(APIView):
                 room.opponent.total_duels += 1
                 room.creator.save(update_fields=['wins', 'total_duels'])
                 room.opponent.save(update_fields=['losses', 'total_duels'])
+
+                award_achievements(room.creator)
+                award_achievements(room.opponent)
 
                 room.status = 'finished'
                 room.finished_at = timezone.now()
