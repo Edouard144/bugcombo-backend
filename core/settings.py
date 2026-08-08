@@ -28,6 +28,8 @@ INSTALLED_APPS = [
     'duels',
     'bugs',
     'notifications',
+    'achievements',
+    'chat',
 ]
 
 MIDDLEWARE = [

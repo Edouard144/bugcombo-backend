@@ -10,7 +10,7 @@ from asgiref.sync import async_to_sync
 from django.utils import timezone
 from users.models import User
 from achievements.models import Achievement
-from notifications.services import send_notification, send_achievement_unlocked_email
+from notifications.services import send_notification, send_achievement_unlocked_email, send_duel_judged_email
 from core.permissions import IsDuelParticipant
 import random
 import string
@@ -97,6 +97,7 @@ class JoinDuelView(APIView):
         room.opponent = request.user
         room.status = 'active'
         room.started_at = timezone.now()
+        room.timeout_at = timezone.now() + timezone.timedelta(seconds=room.duration)
         room.save()
         invalidate_room_cache(code)
         send_notification(
