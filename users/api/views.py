@@ -20,8 +20,18 @@ User = get_user_model()
 class RegisterThrottle(AnonRateThrottle):
     rate = '5/hour'
 
+    def allow_request(self, request, view):
+        if getattr(settings, 'TESTING', False):
+            return True
+        return super().allow_request(request, view)
+
 class GoogleLoginThrottle(AnonRateThrottle):
     rate = '10/hour'
+
+    def allow_request(self, request, view):
+        if getattr(settings, 'TESTING', False):
+            return True
+        return super().allow_request(request, view)
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]

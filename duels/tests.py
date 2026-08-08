@@ -242,6 +242,8 @@ class CodeSubmissionTests(TestCase):
         response = self.client.post(f'/api/duels/{code}/submit/', {
             'code': 'print(1/0)'
         })
+        if hasattr(response, 'content'):
+            print('RESPONSE:', response.status_code, response.content)
         self.assertEqual(response.status_code, 200)
 
         self.creator.refresh_from_db()

@@ -5,7 +5,7 @@ from datetime import timedelta
 from django.utils import timezone
 from django.db.models import Count, Q
 from django.contrib.auth import get_user_model
-from duels.models import DuelRoom
+from duels.models import DuelRoom, Submission
 from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -109,3 +109,84 @@ def cleanup_stale_rooms():
     count = stale_rooms.count()
     stale_rooms.delete()
     logger.info("Cleaned up %s stale duel rooms", count)
+
+
+@app.task
+def timeout_duels():
+    now = timezone.now()
+    timed_out = DuelRoom.objects.filter(
+        status__in=['active', 'judging'],
+        timeout_at__lt=now,
+    ).select_related('creator', 'opponent')
+
+    for room in timed_out:
+        submissions = list(Submission.objects.filter(room=room).select_related('player'))
+        creator_sub = next((s for s in submissions if s.player_id == room.creator_id), None)
+        opponent_sub = next((s for s in submissions if s.player_id == room.opponent_id), None)
+
+        winner = None
+        if creator_sub and opponent_sub:
+            try:
+                result = judge_submissions(
+                    buggy_code=room.buggy_code,
+                    submission1=creator_sub.code,
+                    submission2=opponent_sub.code,
+                    language=room.language,
+                )
+                winner = result['winner']
+                p1 = result['player1']
+                p2 = result['player2']
+
+                Submission.objects.filter(pk=creator_sub.pk).update(
+                    correctness=p1['correctness'],
+                    cleanliness=p1['cleanliness'],
+                    efficiency=p1['efficiency'],
+                    security=p1['security'],
+                    score=p1['score'],
+                    ai_feedback=p1['feedback'],
+                    is_winner=winner == 'player1',
+                )
+                Submission.objects.filter(pk=opponent_sub.pk).update(
+                    correctness=p2['correctness'],
+                    cleanliness=p2['cleanliness'],
+                    efficiency=p2['efficiency'],
+                    security=p2['security'],
+                    score=p2['score'],
+                    ai_feedback=p2['feedback'],
+                    is_winner=winner == 'player2',
+                )
+            except Exception:
+                winner = None
+        elif creator_sub and not opponent_sub:
+            winner = 'player1'
+            creator_sub.is_winner = True
+            creator_sub.score = creator_sub.score or 1.0
+            creator_sub.save(update_fields=['is_winner', 'score'])
+        elif opponent_sub and not creator_sub:
+            winner = 'player2'
+            opponent_sub.is_winner = True
+            opponent_sub.score = opponent_sub.score or 1.0
+            opponent_sub.save(update_fields=['is_winner', 'score'])
+
+        if winner == 'player1':
+            room.creator.wins += 1
+            room.opponent.losses += 1
+        elif winner == 'player2':
+            room.opponent.wins += 1
+            room.creator.losses += 1
+
+        room.creator.total_duels += 1
+        room.opponent.total_duels += 1
+        room.creator.save(update_fields=['wins', 'losses', 'total_duels'])
+        room.opponent.save(update_fields=['wins', 'losses', 'total_duels'])
+
+        room.status = 'finished'
+        room.finished_at = now
+        room.save(update_fields=['status', 'finished_at'])
+
+        from notifications.tasks import send_duel_judged_notifications
+        send_duel_judged_notifications.delay(room.code)
+        _notify_room(room.code, 'duel_judged')
+
+        logger.info("Timed out room %s, winner=%s", room.code, winner or 'draw')
+

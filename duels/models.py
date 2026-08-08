@@ -38,6 +38,7 @@ class DuelRoom(models.Model):
     duration = models.IntegerField(choices=DURATION_CHOICES, default=180)
     buggy_code = models.TextField(blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
+    timeout_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     archived = models.BooleanField(default=False, db_index=True)

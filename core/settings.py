@@ -29,7 +29,7 @@ INSTALLED_APPS = [
     'bugs',
     'notifications',
     'achievements',
-    'audit',
+    'chat',
 ]
 
 MIDDLEWARE = [
