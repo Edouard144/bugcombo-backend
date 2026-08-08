@@ -8,7 +8,8 @@ from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
-from django.conf import settings
+from users.models import User
+from achievements.models import Achievement
 import random
 import string
 import time
@@ -38,12 +39,18 @@ def get_cached_room(code):
 def invalidate_room_cache(code):
     _room_cache.pop(code, None)
 
-def send_notification(user, notification_type, message):
-    Notification.objects.create(
-        user=user,
-        type=notification_type,
-        message=message
-    )
+def award_achievements(user):
+    conditions = []
+    if user.wins >= 1:
+        conditions.append('first_win')
+    if user.wins >= 10:
+        conditions.append('ten_wins')
+    if user.total_duels >= 100:
+        conditions.append('hundred_duels')
+
+    achievements = Achievement.objects.filter(condition__in=conditions)
+    for achievement in achievements:
+        user.achievements.add(achievement)
 
 class CreateDuelView(APIView):
     permission_classes = [IsAuthenticated]
@@ -288,6 +295,9 @@ class SubmitCodeView(APIView):
                 room.opponent.total_duels += 1
                 room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
                 room.opponent.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
+
+                award_achievements(room.creator)
+                award_achievements(room.opponent)
 
                 room.status = 'finished'
                 room.finished_at = timezone.now()
