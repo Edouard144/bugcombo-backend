@@ -104,8 +104,7 @@ class JoinDuelView(APIView):
             notification_type='opponent_joined',
             message=f'{request.user.username} joined your duel room {code}'
         )
-        channel_layer = get_channel_layer_instance()
-        async_to_sync(channel_layer.group_send)(
+        async_to_sync(get_channel_layer_instance().group_send)(
             f'duel_{code}',
             {'type': 'room_update', 'status': 'active', 'code': code}
         )
@@ -185,7 +184,7 @@ def _run_judging(room_id, code):
         invalidate_room_cache(code)
 
         channel_layer = get_channel_layer_instance()
-        async_to_sync(channel_layer.group_send)(
+        async_to_sync(get_channel_layer_instance().group_send)(
             f'duel_{code}',
             {'type': 'duel_judged'}
         )
@@ -198,7 +197,7 @@ def _run_judging(room_id, code):
             room.save(update_fields=['status', 'finished_at'])
             invalidate_room_cache(code)
             channel_layer = get_channel_layer_instance()
-            async_to_sync(channel_layer.group_send)(
+            async_to_sync(get_channel_layer_instance().group_send)(
                 f'duel_{code}',
                 {'type': 'duel_judged'}
             )
@@ -231,7 +230,7 @@ class SubmitCodeView(APIView):
         )
 
         channel_layer = get_channel_layer_instance()
-        async_to_sync(channel_layer.group_send)(
+        async_to_sync(get_channel_layer_instance().group_send)(
             f'duel_{code}',
             {'type': 'submitted', 'player': request.user.username}
         )
@@ -321,7 +320,7 @@ class SubmitCodeView(APIView):
                 )
                 send_duel_judged_email(room.opponent, code, 'Your duel has been judged')
 
-                async_to_sync(channel_layer.group_send)(
+                async_to_sync(get_channel_layer_instance().group_send)(
                     f'duel_{code}',
                     {'type': 'duel_judged'}
                 )
