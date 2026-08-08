@@ -51,7 +51,9 @@ def award_achievements(user):
 
     achievements = Achievement.objects.filter(condition__in=conditions)
     for achievement in achievements:
-        user.achievements.add(achievement)
+        if not user.achievements.filter(pk=achievement.pk).exists():
+            user.achievements.add(achievement)
+            send_achievement_unlocked_email(user, achievement.name)
 
 class CreateDuelView(APIView):
     permission_classes = [IsAuthenticated]
@@ -311,11 +313,13 @@ class SubmitCodeView(APIView):
                     notification_type='duel_judged',
                     message=f'Duel {code} has been judged'
                 )
+                send_duel_judged_email(room.creator, code, 'Your duel has been judged')
                 send_notification(
                     user=room.opponent,
                     notification_type='duel_judged',
                     message=f'Duel {code} has been judged'
                 )
+                send_duel_judged_email(room.opponent, code, 'Your duel has been judged')
 
                 async_to_sync(channel_layer.group_send)(
                     f'duel_{code}',
