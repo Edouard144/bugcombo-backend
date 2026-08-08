@@ -1,6 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .views import RegisterView, MeView, LeaderboardView, GoogleLoginView, ProfileView, SeasonalLeaderboardView
+from .password_reset import PasswordResetRequestView, PasswordResetConfirmView
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
@@ -11,4 +12,6 @@ urlpatterns = [
     path('leaderboard/seasonal/', SeasonalLeaderboardView.as_view(), name='seasonal_leaderboard'),
     path('google/', GoogleLoginView.as_view(), name='google_login'),
     path('profile/<str:username>/', ProfileView.as_view(), name='profile'),
+    path('password-reset/', PasswordResetRequestView.as_view(), name='password_reset_request'),
+    path('password-reset/confirm/', PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
 ]
