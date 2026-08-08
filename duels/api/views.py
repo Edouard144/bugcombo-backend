@@ -3,8 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from duels.models import DuelRoom, Submission
-from notifications.models import Notification
-from .serializers import DuelRoomSerializer, SubmissionSerializer
+from .serializers import DuelRoomSerializer, SubmissionSerializer, MatchDetailSerializer
 from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -357,3 +356,18 @@ class RematchView(APIView):
             except Exception:
                 continue
         return Response({'error': 'Failed to generate room code'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class MatchDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, code):
+        try:
+            room = DuelRoom.objects.select_related('creator', 'opponent').get(code=code)
+        except DuelRoom.DoesNotExist:
+            return Response({'error': 'Match not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.user != room.creator and request.user != room.opponent:
+            return Response({'error': 'You are not a player in this match'}, status=status.HTTP_403_FORBIDDEN)
+
+        return Response(MatchDetailSerializer(room).data)

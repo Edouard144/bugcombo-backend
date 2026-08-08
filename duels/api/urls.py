@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import CreateDuelView, JoinDuelView, DuelDetailView, SubmitCodeView, RoomSubmissionsView, RematchView
+from .views import CreateDuelView, JoinDuelView, DuelDetailView, SubmitCodeView, RoomSubmissionsView, RematchView, MatchDetailView
 
 urlpatterns = [
     path('create/', CreateDuelView.as_view(), name='create_duel'),
@@ -7,5 +7,6 @@ urlpatterns = [
     path('<str:code>/submit/', SubmitCodeView.as_view(), name='submit_code'),
     path('<str:code>/submissions/', RoomSubmissionsView.as_view(), name='room_submissions'),
     path('<str:code>/rematch/', RematchView.as_view(), name='rematch'),
+    path('<str:code>/match/', MatchDetailView.as_view(), name='match_detail'),
     path('<str:code>/', DuelDetailView.as_view(), name='duel_detail'),
 ]
