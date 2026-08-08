@@ -1,7 +1,7 @@
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from duels.models import DuelRoom, Submission
 from notifications.models import Notification
 from .serializers import DuelRoomSerializer, SubmissionSerializer
@@ -357,3 +357,170 @@ class RematchView(APIView):
             except Exception:
                 continue
         return Response({'error': 'Failed to generate room code'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class OpenLobbyView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        rooms = DuelRoom.objects.filter(status='waiting').select_related('creator').order_by('-created_at')[:50]
+        data = DuelRoomSerializer(rooms, many=True).data
+        return Response(data)
+
+class ForfeitView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, code):
+        try:
+            room = DuelRoom.objects.select_related('creator', 'opponent').get(code=code)
+        except DuelRoom.DoesNotExist:
+            return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if room.status not in ('waiting', 'active'):
+            return Response({'error': 'Room cannot be forfeited'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if request.user != room.creator and request.user != room.opponent:
+            return Response({'error': 'You are not a player in this room'}, status=status.HTTP_403_FORBIDDEN)
+
+        opponent = room.opponent if request.user == room.creator else room.creator
+        winner = opponent if opponent else None
+
+        if winner:
+            winner.wins += 1
+            winner.current_streak += 1
+            winner.best_streak = max(winner.best_streak, winner.current_streak)
+            winner.last_win_at = timezone.now()
+            winner.total_duels += 1
+            winner.save(update_fields=['wins', 'current_streak', 'best_streak', 'last_win_at', 'total_duels'])
+
+        if request.user == room.creator:
+            room.creator.losses += 1
+            room.creator.current_streak = 0
+            room.creator.total_duels += 1
+            room.creator.save(update_fields=['losses', 'current_streak', 'total_duels'])
+        else:
+            if room.opponent:
+                room.opponent.losses += 1
+                room.opponent.current_streak = 0
+                room.opponent.total_duels += 1
+                room.opponent.save(update_fields=['losses', 'current_streak', 'total_duels'])
+
+        room.status = 'finished'
+        room.finished_at = timezone.now()
+        room.save(update_fields=['status', 'finished_at'])
+        invalidate_room_cache(code)
+
+        async_to_sync(channel_layer.group_send)(
+            f'duel_{code}',
+            {'type': 'duel_judged'}
+        )
+
+        return Response({'ok': True, 'winner': winner.username if winner else None})
+
+class DuelHistoryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        rooms = DuelRoom.objects.select_related('creator', 'opponent').filter(
+            status='finished'
+        ).filter(
+            creator=request.user
+        ).union(
+            DuelRoom.objects.select_related('creator', 'opponent').filter(
+                status='finished',
+                opponent=request.user
+            )
+        ).order_by('-finished_at')[:20]
+
+        data = []
+        for room in rooms:
+            opponent = room.opponent if room.creator == request.user else room.creator
+            submission = Submission.objects.filter(room=room, player=request.user).first()
+            result = 'win' if submission and submission.is_winner else 'loss'
+            data.append({
+                'code': room.code,
+                'opponent': opponent.username if opponent else 'Unknown',
+                'result': result,
+                'score': submission.score if submission else 0.0,
+                'language': room.language,
+                'difficulty': room.difficulty,
+                'finished_at': room.finished_at,
+            })
+        return Response(data)
+
+class InviteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, code):
+        try:
+            room = DuelRoom.objects.get(code=code, status='waiting')
+        except DuelRoom.DoesNotExist:
+            return Response({'error': 'Room not found or already started'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.user != room.creator:
+            return Response({'error': 'Only the creator can invite'}, status=status.HTTP_403_FORBIDDEN)
+
+        invitee_username = request.data.get('username')
+        if not invitee_username:
+            return Response({'error': 'Username is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        try:
+            invitee = User.objects.get(username=invitee_username)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if invitee == room.creator:
+            return Response({'error': 'Cannot invite yourself'}, status=status.HTTP_400_BAD_REQUEST)
+
+        send_notification(
+            user=invitee,
+            notification_type='opponent_joined',
+            message=f'{request.user.username} invited you to join duel room {code}'
+        )
+
+        return Response({'ok': True, 'message': f'Invite sent to {invitee_username}'})
+
+class DuelStatsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        total = user.total_duels
+        wins = user.wins
+        losses = user.losses
+        win_rate = (wins / total * 100) if total > 0 else 0.0
+
+        recent_rooms = DuelRoom.objects.filter(
+            status='finished'
+        ).filter(
+            creator=user
+        ).union(
+            DuelRoom.objects.filter(
+                status='finished',
+                opponent=user
+            )
+        ).order_by('-finished_at')[:10]
+
+        recent = []
+        for room in recent_rooms:
+            opponent = room.opponent if room.creator == user else room.creator
+            submission = Submission.objects.filter(room=room, player=user).first()
+            result = 'win' if submission and submission.is_winner else 'loss'
+            recent.append({
+                'code': room.code,
+                'opponent': opponent.username if opponent else 'Unknown',
+                'result': result,
+                'score': submission.score if submission else 0.0,
+                'finished_at': room.finished_at,
+            })
+
+        return Response({
+            'total_duels': total,
+            'wins': wins,
+            'losses': losses,
+            'win_rate': round(win_rate, 2),
+            'current_streak': user.current_streak,
+            'best_streak': user.best_streak,
+            'recent_matches': recent,
+        })
