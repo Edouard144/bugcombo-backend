@@ -22,6 +22,12 @@ class DuelRoom(models.Model):
         ('hard', 'Hard'),
     ]
 
+    DURATION_CHOICES = [
+        (60, '1 minute'),
+        (180, '3 minutes'),
+        (300, '5 minutes'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     code = models.CharField(max_length=8, unique=True, db_index=True)
     creator = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='created_duels')
@@ -29,6 +35,7 @@ class DuelRoom(models.Model):
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='waiting', db_index=True)
     language = models.CharField(max_length=20, choices=LANGUAGE_CHOICES, default='python')
     difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES, default='easy')
+    duration = models.IntegerField(choices=DURATION_CHOICES, default=180)
     buggy_code = models.TextField(blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
