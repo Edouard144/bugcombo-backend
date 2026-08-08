@@ -151,14 +151,22 @@ def _run_judging(room_id, code):
 
         if winner == 'player1':
             room.creator.wins += 1
+            room.creator.current_streak += 1
+            room.creator.best_streak = max(room.creator.best_streak, room.creator.current_streak)
+            room.creator.last_win_at = timezone.now()
             room.opponent.losses += 1
+            room.opponent.current_streak = 0
         elif winner == 'player2':
             room.opponent.wins += 1
+            room.opponent.current_streak += 1
+            room.opponent.best_streak = max(room.opponent.best_streak, room.opponent.current_streak)
+            room.opponent.last_win_at = timezone.now()
             room.creator.losses += 1
+            room.creator.current_streak = 0
         room.creator.total_duels += 1
         room.opponent.total_duels += 1
-        room.creator.save(update_fields=['wins', 'losses', 'total_duels'])
-        room.opponent.save(update_fields=['wins', 'losses', 'total_duels'])
+        room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
+        room.opponent.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
 
         room.status = 'finished'
         room.finished_at = timezone.now()
@@ -265,14 +273,22 @@ class SubmitCodeView(APIView):
 
                 if winner == 'player1':
                     room.creator.wins += 1
+                    room.creator.current_streak += 1
+                    room.creator.best_streak = max(room.creator.best_streak, room.creator.current_streak)
+                    room.creator.last_win_at = timezone.now()
                     room.opponent.losses += 1
+                    room.opponent.current_streak = 0
                 else:
                     room.opponent.wins += 1
+                    room.opponent.current_streak += 1
+                    room.opponent.best_streak = max(room.opponent.best_streak, room.opponent.current_streak)
+                    room.opponent.last_win_at = timezone.now()
                     room.creator.losses += 1
+                    room.creator.current_streak = 0
                 room.creator.total_duels += 1
                 room.opponent.total_duels += 1
-                room.creator.save(update_fields=['wins', 'total_duels'])
-                room.opponent.save(update_fields=['losses', 'total_duels'])
+                room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
+                room.opponent.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
 
                 room.status = 'finished'
                 room.finished_at = timezone.now()
