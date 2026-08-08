@@ -6,9 +6,12 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.cache import cache
+from django.db.models import Q, Count
+from django.utils import timezone
 from google.oauth2 import id_token
 from google.auth.transport import requests
-from .serializers import RegisterSerializer, UserSerializer
+from duels.models import DuelRoom, Submission
+from .serializers import RegisterSerializer, UserSerializer, MatchHistorySerializer, ProfileStatsSerializer
 
 User = get_user_model()
 
@@ -47,6 +50,33 @@ class LeaderboardView(APIView):
             cache.set(cache_key, data, 30)
         return Response(data)
 
+class SeasonalLeaderboardView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        now = timezone.now()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        seasonal_winners = Submission.objects.filter(
+            room__status='finished',
+            room__finished_at__gte=month_start,
+            is_winner=True
+        ).values('player').annotate(
+            seasonal_wins=Count('id')
+        ).order_by('-seasonal_wins')[:10]
+
+        leaderboard = []
+        for entry in seasonal_winners:
+            user = User.objects.get(pk=entry['player'])
+            leaderboard.append({
+                'id': user.id,
+                'username': user.username,
+                'seasonal_wins': entry['seasonal_wins'],
+                'total_duels': user.total_duels,
+                'current_streak': user.current_streak,
+                'best_streak': user.best_streak,
+            })
+        return Response(leaderboard)
+
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
 
@@ -79,4 +109,47 @@ class GoogleLoginView(APIView):
                 'access': str(refresh.access_token),
             },
             'created': created,
+        })
+
+class ProfileView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, username):
+        try:
+            user = User.objects.get(username=username)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        total = user.total_duels
+        wins = user.wins
+        losses = user.losses
+        win_rate = (wins / total * 100) if total > 0 else 0.0
+
+        rooms = DuelRoom.objects.select_related('creator', 'opponent').filter(
+            Q(creator=user) | Q(opponent=user),
+            status='finished'
+        ).order_by('-finished_at')[:10]
+
+        matches = []
+        for room in rooms:
+            opponent = room.opponent if room.creator == user else room.creator
+            submission = Submission.objects.filter(room=room, player=user).first()
+            result = 'win' if submission and submission.is_winner else 'loss'
+            score = submission.score if submission else 0.0
+
+            matches.append({
+                'opponent': opponent.username if opponent else 'Unknown',
+                'result': result,
+                'score': score,
+                'date': room.finished_at
+            })
+
+        return Response({
+            'stats': ProfileStatsSerializer({
+                'wins': wins,
+                'losses': losses,
+                'total_duels': total,
+                'win_rate': round(win_rate, 2)
+            }).data,
+            'matches': MatchHistorySerializer(matches, many=True).data
         })

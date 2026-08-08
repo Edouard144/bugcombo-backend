@@ -21,4 +21,16 @@ class RegisterSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'bio', 'total_duels', 'wins', 'losses', 'created_at']
+        fields = ['id', 'username', 'email', 'bio', 'total_duels', 'wins', 'losses', 'current_streak', 'best_streak', 'last_win_at', 'created_at']
+
+class MatchHistorySerializer(serializers.Serializer):
+    opponent = serializers.CharField()
+    result = serializers.CharField()
+    score = serializers.FloatField()
+    date = serializers.DateTimeField()
+
+class ProfileStatsSerializer(serializers.Serializer):
+    wins = serializers.IntegerField()
+    losses = serializers.IntegerField()
+    total_duels = serializers.IntegerField()
+    win_rate = serializers.FloatField()
