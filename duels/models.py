@@ -41,12 +41,14 @@ class DuelRoom(models.Model):
     timeout_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    archived = models.BooleanField(default=False, db_index=True)
 
     class Meta:
         indexes = [
             models.Index(fields=['status', 'created_at']),
             models.Index(fields=['creator', 'status']),
             models.Index(fields=['opponent', 'status']),
+            models.Index(fields=['archived', 'created_at']),
         ]
 
     def __str__(self):

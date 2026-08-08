@@ -22,3 +22,14 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.type} for {self.user.username}"
+
+class NotificationPreference(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_preferences')
+    opponent_joined = models.BooleanField(default=True)
+    opponent_submitted = models.BooleanField(default=True)
+    duel_judged = models.BooleanField(default=True)
+    achievement_unlocked = models.BooleanField(default=True)
+    email_notifications = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"Preferences for {self.user.username}"
