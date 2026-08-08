@@ -26,7 +26,7 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'users',
     'duels',
-    'bugs',
+    'achievements',
 ]
 
 MIDDLEWARE = [
