@@ -21,4 +21,4 @@ class DuelRoomSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DuelRoom
-        fields = ['id', 'code', 'creator', 'opponent', 'status', 'language', 'difficulty', 'buggy_code', 'started_at', 'finished_at', 'created_at']
+        fields = ['id', 'code', 'creator', 'opponent', 'status', 'language', 'difficulty', 'duration', 'buggy_code', 'started_at', 'finished_at', 'created_at']

@@ -3,6 +3,11 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# Docker status files
+Common
+Exited
+Running
+
 # C extensions
 *.so
 
