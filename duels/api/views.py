@@ -10,6 +10,7 @@ from asgiref.sync import async_to_sync
 from django.utils import timezone
 from users.models import User
 from achievements.models import Achievement
+from notifications.services import send_notification, send_opponent_joined_email, send_duel_judged_email, send_achievement_unlocked_email
 import random
 import string
 import time
@@ -50,7 +51,9 @@ def award_achievements(user):
 
     achievements = Achievement.objects.filter(condition__in=conditions)
     for achievement in achievements:
-        user.achievements.add(achievement)
+        if not user.achievements.filter(pk=achievement.pk).exists():
+            user.achievements.add(achievement)
+            send_achievement_unlocked_email(user, achievement.name)
 
 class CreateDuelView(APIView):
     permission_classes = [IsAuthenticated]
@@ -100,6 +103,7 @@ class JoinDuelView(APIView):
             notification_type='opponent_joined',
             message=f'{request.user.username} joined your duel room {code}'
         )
+        send_opponent_joined_email(room.creator, request.user.username, code)
         async_to_sync(channel_layer.group_send)(
             f'duel_{code}',
             {'type': 'room_update', 'status': 'active', 'code': code}
@@ -309,11 +313,13 @@ class SubmitCodeView(APIView):
                     notification_type='duel_judged',
                     message=f'Duel {code} has been judged'
                 )
+                send_duel_judged_email(room.creator, code, 'Your duel has been judged')
                 send_notification(
                     user=room.opponent,
                     notification_type='duel_judged',
                     message=f'Duel {code} has been judged'
                 )
+                send_duel_judged_email(room.opponent, code, 'Your duel has been judged')
 
                 async_to_sync(channel_layer.group_send)(
                     f'duel_{code}',
