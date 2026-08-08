@@ -14,6 +14,7 @@ class User(AbstractUser):
     last_win_at = models.DateTimeField(null=True, blank=True)
     achievements = models.ManyToManyField('achievements.Achievement', related_name='users', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    achievements = models.ManyToManyField('achievements.Achievement', blank=True, related_name='users')
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username']
