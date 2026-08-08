@@ -3,13 +3,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from duels.models import DuelRoom, Submission
-from notifications.models import Notification
-from .serializers import DuelRoomSerializer, SubmissionSerializer
+from .serializers import DuelRoomSerializer, SubmissionSerializer, MatchDetailSerializer
 from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
-from django.conf import settings
+from users.models import User
+from achievements.models import Achievement
+from notifications.services import send_notification, send_achievement_unlocked_email
+from core.permissions import IsDuelParticipant
 import random
 import string
 import time
@@ -39,12 +41,20 @@ def get_cached_room(code):
 def invalidate_room_cache(code):
     _room_cache.pop(code, None)
 
-def send_notification(user, notification_type, message):
-    Notification.objects.create(
-        user=user,
-        type=notification_type,
-        message=message
-    )
+def award_achievements(user):
+    conditions = []
+    if user.wins >= 1:
+        conditions.append('first_win')
+    if user.wins >= 10:
+        conditions.append('ten_wins')
+    if user.total_duels >= 100:
+        conditions.append('hundred_duels')
+
+    achievements = Achievement.objects.filter(condition__in=conditions)
+    for achievement in achievements:
+        if not user.achievements.filter(pk=achievement.pk).exists():
+            user.achievements.add(achievement)
+            send_achievement_unlocked_email(user, achievement.name)
 
 class CreateDuelView(APIView):
     permission_classes = [IsAuthenticated]
@@ -94,6 +104,7 @@ class JoinDuelView(APIView):
             notification_type='opponent_joined',
             message=f'{request.user.username} joined your duel room {code}'
         )
+        channel_layer = get_channel_layer_instance()
         async_to_sync(channel_layer.group_send)(
             f'duel_{code}',
             {'type': 'room_update', 'status': 'active', 'code': code}
@@ -196,7 +207,7 @@ def _run_judging(room_id, code):
 
 
 class SubmitCodeView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsDuelParticipant]
 
     def post(self, request, code):
         try:
@@ -205,8 +216,6 @@ class SubmitCodeView(APIView):
             return Response({'error': 'Active room not found'}, status=status.HTTP_404_NOT_FOUND)
         if room.status != 'active':
             return Response({'error': 'Room is not active'}, status=status.HTTP_400_BAD_REQUEST)
-        if request.user != room.creator and request.user != room.opponent:
-            return Response({'error': 'You are not a player in this room'}, status=status.HTTP_403_FORBIDDEN)
 
         code_text = request.data.get('code', '').strip()
         if not code_text:
@@ -278,17 +287,21 @@ class SubmitCodeView(APIView):
                     room.creator.last_win_at = timezone.now()
                     room.opponent.losses += 1
                     room.opponent.current_streak = 0
-                else:
+                elif winner == 'player2':
                     room.opponent.wins += 1
                     room.opponent.current_streak += 1
                     room.opponent.best_streak = max(room.opponent.best_streak, room.opponent.current_streak)
                     room.opponent.last_win_at = timezone.now()
                     room.creator.losses += 1
                     room.creator.current_streak = 0
+                # tie: neither player gets a win/loss, streaks unchanged
                 room.creator.total_duels += 1
                 room.opponent.total_duels += 1
                 room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
                 room.opponent.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
+
+                award_achievements(room.creator)
+                award_achievements(room.opponent)
 
                 room.status = 'finished'
                 room.finished_at = timezone.now()
@@ -300,11 +313,13 @@ class SubmitCodeView(APIView):
                     notification_type='duel_judged',
                     message=f'Duel {code} has been judged'
                 )
+                send_duel_judged_email(room.creator, code, 'Your duel has been judged')
                 send_notification(
                     user=room.opponent,
                     notification_type='duel_judged',
                     message=f'Duel {code} has been judged'
                 )
+                send_duel_judged_email(room.opponent, code, 'Your duel has been judged')
 
                 async_to_sync(channel_layer.group_send)(
                     f'duel_{code}',
@@ -331,7 +346,7 @@ class RoomSubmissionsView(APIView):
 
 
 class RematchView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsDuelParticipant]
 
     def post(self, request, code):
         try:
@@ -339,8 +354,7 @@ class RematchView(APIView):
         except DuelRoom.DoesNotExist:
             return Response({'error': 'Original room not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        if request.user != old_room.creator and request.user != old_room.opponent:
-            return Response({'error': 'You are not a player in this room'}, status=status.HTTP_403_FORBIDDEN)
+        self.check_object_permissions(request, old_room)
 
         for _ in range(10):
             new_code = generate_room_code()
