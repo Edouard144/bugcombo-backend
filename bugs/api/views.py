@@ -4,9 +4,10 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from ..models import Bug
 from .serializers import BugSerializer, BugListSerializer
+from core.permissions import IsBugCreator, IsAdminOrReadOnly
 
 class BugListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrReadOnly]
 
     def get(self, request):
         bugs = Bug.objects.all()
@@ -50,7 +51,7 @@ class BugListCreateView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class BugDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsBugCreator]
 
     def get(self, request, pk):
         try:
@@ -63,8 +64,7 @@ class BugDetailView(APIView):
     def put(self, request, pk):
         try:
             bug = Bug.objects.get(pk=pk)
-            if bug.created_by != request.user:
-                return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
+            self.check_object_permissions(request, bug)
             serializer = BugSerializer(bug, data=request.data, partial=True)
             if serializer.is_valid():
                 serializer.save()
@@ -76,8 +76,7 @@ class BugDetailView(APIView):
     def delete(self, request, pk):
         try:
             bug = Bug.objects.get(pk=pk)
-            if bug.created_by != request.user:
-                return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
+            self.check_object_permissions(request, bug)
             bug.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Bug.DoesNotExist:
