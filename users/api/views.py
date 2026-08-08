@@ -6,7 +6,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import Q
+from django.db.models import Q, Count
+from django.utils import timezone
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from duels.models import DuelRoom, Submission
@@ -48,6 +49,33 @@ class LeaderboardView(APIView):
             data = UserSerializer(players, many=True).data
             cache.set(cache_key, data, 30)
         return Response(data)
+
+class SeasonalLeaderboardView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        now = timezone.now()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        seasonal_winners = Submission.objects.filter(
+            room__status='finished',
+            room__finished_at__gte=month_start,
+            is_winner=True
+        ).values('player').annotate(
+            seasonal_wins=Count('id')
+        ).order_by('-seasonal_wins')[:10]
+
+        leaderboard = []
+        for entry in seasonal_winners:
+            user = User.objects.get(pk=entry['player'])
+            leaderboard.append({
+                'id': user.id,
+                'username': user.username,
+                'seasonal_wins': entry['seasonal_wins'],
+                'total_duels': user.total_duels,
+                'current_streak': user.current_streak,
+                'best_streak': user.best_streak,
+            })
+        return Response(leaderboard)
 
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
