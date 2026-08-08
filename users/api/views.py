@@ -2,6 +2,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.conf import settings
@@ -12,11 +13,19 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 from duels.models import DuelRoom, Submission
 from .serializers import RegisterSerializer, UserSerializer, MatchHistorySerializer, ProfileStatsSerializer
+import hashlib
 
 User = get_user_model()
 
+class RegisterThrottle(AnonRateThrottle):
+    rate = '5/hour'
+
+class GoogleLoginThrottle(AnonRateThrottle):
+    rate = '10/hour'
+
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [RegisterThrottle]
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
@@ -79,6 +88,7 @@ class SeasonalLeaderboardView(APIView):
 
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [GoogleLoginThrottle]
 
     def post(self, request):
         token = request.data.get('token')
@@ -89,14 +99,17 @@ class GoogleLoginView(APIView):
             idinfo = id_token.verify_oauth2_token(token, requests.Request(), settings.GOOGLE_CLIENT_ID)
             email = idinfo['email']
             name = idinfo.get('name', '')
-            picture = idinfo.get('picture', '')
         except Exception:
             return Response({'error': 'Invalid Google token'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        suffix = hashlib.md5(email.encode()).hexdigest()[:6]
+        base_username = name.replace(' ', '_').lower() or email.split('@')[0]
+        username = f"{base_username}_{suffix}"
 
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
-                'username': name.replace(' ', '_').lower() + str(hash(email) % 10000),
+                'username': username,
                 'bio': f'Google user: {name}',
             }
         )
