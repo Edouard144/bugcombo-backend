@@ -10,7 +10,7 @@ from asgiref.sync import async_to_sync
 from django.utils import timezone
 from users.models import User
 from achievements.models import Achievement
-from notifications.services import send_notification, send_achievement_unlocked_email
+from notifications.services import send_notification, send_achievement_unlocked_email, send_duel_judged_email
 from core.permissions import IsDuelParticipant
 import random
 import string
