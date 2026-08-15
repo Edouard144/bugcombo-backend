@@ -21,8 +21,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
-
 _room_cache = {}
 _CACHE_TTL = 5
 

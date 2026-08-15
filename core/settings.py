@@ -30,7 +30,7 @@ INSTALLED_APPS = [
     'chat',
     'notifications',
     'achievements',
-    'chat',
+    'audit',
 ]
 
 MIDDLEWARE = [
@@ -138,7 +138,7 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
 }
 
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173,http://localhost:8081,https://bugcomboo.onrender.com')
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in FRONTEND_URL.split(',') if origin.strip()]
 CORS_ALLOW_CREDENTIALS = True
 
