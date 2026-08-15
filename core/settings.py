@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     'users',
     'duels',
     'bugs',
+    'chat',
     'notifications',
     'achievements',
     'chat',

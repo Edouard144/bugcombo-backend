@@ -7,7 +7,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import Q, Count
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 from google.oauth2 import id_token
 from google.auth.transport import requests
@@ -66,35 +66,48 @@ class LeaderboardView(APIView):
         if data is None:
             players = User.objects.order_by('-wins', '-total_duels')[:10]
             data = UserSerializer(players, many=True).data
-            cache.set(cache_key, data, 30)
+            cache.set(cache_key, data, 60)
         return Response(data)
+
+def invalidate_leaderboard_cache():
+    cache.delete('leaderboard_top10')
 
 class SeasonalLeaderboardView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        now = timezone.now()
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        seasonal_winners = Submission.objects.filter(
-            room__status='finished',
-            room__finished_at__gte=month_start,
-            is_winner=True
-        ).values('player').annotate(
-            seasonal_wins=Count('id')
-        ).order_by('-seasonal_wins')[:10]
+        cache_key = 'leaderboard_seasonal'
+        data = cache.get(cache_key)
+        if data is None:
+            now = timezone.now()
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            seasonal_winners = Submission.objects.filter(
+                room__finished_at__gte=month_start,
+                is_winner=True
+            ).values('player').annotate(
+                seasonal_wins=Count('id')
+            ).order_by('-seasonal_wins')[:10]
 
-        leaderboard = []
-        for entry in seasonal_winners:
-            user = User.objects.get(pk=entry['player'])
-            leaderboard.append({
-                'id': user.id,
-                'username': user.username,
-                'seasonal_wins': entry['seasonal_wins'],
-                'total_duels': user.total_duels,
-                'current_streak': user.current_streak,
-                'best_streak': user.best_streak,
-            })
-        return Response(leaderboard)
+            user_ids = [entry['player'] for entry in seasonal_winners]
+            users = User.objects.in_bulk(user_ids)
+
+            leaderboard = []
+            for entry in seasonal_winners:
+                user = users[entry['player']]
+                leaderboard.append({
+                    'id': user.id,
+                    'username': user.username,
+                    'seasonal_wins': entry['seasonal_wins'],
+                    'total_duels': user.total_duels,
+                    'current_streak': user.current_streak,
+                    'best_streak': user.best_streak,
+                })
+            data = leaderboard
+            cache.set(cache_key, data, 60)
+        return Response(data)
+
+def invalidate_seasonal_leaderboard_cache():
+    cache.delete('leaderboard_seasonal')
 
 class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
@@ -148,15 +161,23 @@ class ProfileView(APIView):
         losses = user.losses
         win_rate = (wins / total * 100) if total > 0 else 0.0
 
+        # Use prefetch to avoid N+1
         rooms = DuelRoom.objects.select_related('creator', 'opponent').filter(
             Q(creator=user) | Q(opponent=user),
             status='finished'
         ).order_by('-finished_at')[:10]
 
+        # Prefetch submissions to avoid N+1 in the loop
+        room_ids = [r.id for r in rooms]
+        submissions = Submission.objects.filter(
+            room_id__in=room_ids, player=user
+        ).select_related('room')
+        submission_map = {s.room_id: s for s in submissions}
+
         matches = []
         for room in rooms:
-            opponent = room.opponent if room.creator == user else room.creator
-            submission = Submission.objects.filter(room=room, player=user).first()
+            opponent = room.opponent if room.creator_id == user.id else room.creator
+            submission = submission_map.get(room.id)
             result = 'win' if submission and submission.is_winner else 'loss'
             score = submission.score if submission else 0.0
 

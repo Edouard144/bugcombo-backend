@@ -8,15 +8,18 @@ from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
+from django.db.models import Prefetch, Q, Count
 from users.models import User
 from achievements.models import Achievement
 from notifications.services import send_notification, send_achievement_unlocked_email, send_duel_judged_email
 from core.permissions import IsDuelParticipant
+from django.core.cache import cache
 import random
 import string
 import time
-import threading
 import logging
+
+logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,11 @@ def get_cached_room(code):
 
 def invalidate_room_cache(code):
     _room_cache.pop(code, None)
+    cache.delete(f'room_detail_{code}')
+
+def invalidate_leaderboard_cache():
+    cache.delete('leaderboard_top10')
+    cache.delete('leaderboard_seasonal')
 
 def award_achievements(user):
     conditions = []
@@ -115,96 +123,17 @@ class DuelDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, code):
+        cache_key = f'room_detail_{code}'
+        cached = cache.get(cache_key)
+        if cached:
+            return Response(cached)
         try:
             room = get_cached_room(code)
         except DuelRoom.DoesNotExist:
             return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
-        return Response(DuelRoomSerializer(room).data)
-
-def _run_judging(room_id, code):
-    try:
-        room = DuelRoom.objects.select_related('creator', 'opponent').get(pk=room_id)
-        submissions = list(Submission.objects.filter(room=room).select_related('player'))
-        if len(submissions) != 2:
-            return
-
-        creator_sub = next(s for s in submissions if s.player_id == room.creator_id)
-        opponent_sub = next(s for s in submissions if s.player_id == room.opponent_id)
-
-        result = judge_submissions(
-            buggy_code=room.buggy_code,
-            submission1=creator_sub.code,
-            submission2=opponent_sub.code,
-            language=room.language
-        )
-        winner = result['winner']
-        p1 = result['player1']
-        p2 = result['player2']
-
-        Submission.objects.filter(pk=creator_sub.pk).update(
-            correctness=p1['correctness'],
-            cleanliness=p1['cleanliness'],
-            efficiency=p1['efficiency'],
-            security=p1['security'],
-            score=p1['score'],
-            ai_feedback=p1['feedback'],
-            is_winner=winner == 'player1',
-        )
-        Submission.objects.filter(pk=opponent_sub.pk).update(
-            correctness=p2['correctness'],
-            cleanliness=p2['cleanliness'],
-            efficiency=p2['efficiency'],
-            security=p2['security'],
-            score=p2['score'],
-            ai_feedback=p2['feedback'],
-            is_winner=winner == 'player2',
-        )
-
-        if winner == 'player1':
-            room.creator.wins += 1
-            room.creator.current_streak += 1
-            room.creator.best_streak = max(room.creator.best_streak, room.creator.current_streak)
-            room.creator.last_win_at = timezone.now()
-            room.opponent.losses += 1
-            room.opponent.current_streak = 0
-        elif winner == 'player2':
-            room.opponent.wins += 1
-            room.opponent.current_streak += 1
-            room.opponent.best_streak = max(room.opponent.best_streak, room.opponent.current_streak)
-            room.opponent.last_win_at = timezone.now()
-            room.creator.losses += 1
-            room.creator.current_streak = 0
-        room.creator.total_duels += 1
-        room.opponent.total_duels += 1
-        room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
-        room.opponent.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
-
-        room.status = 'finished'
-        room.finished_at = timezone.now()
-        room.save(update_fields=['status', 'finished_at'])
-        invalidate_room_cache(code)
-
-        channel_layer = get_channel_layer_instance()
-        async_to_sync(get_channel_layer_instance().group_send)(
-            f'duel_{code}',
-            {'type': 'duel_judged'}
-        )
-    except Exception as e:
-        logger.exception("Judging failed for room %s", code)
-        try:
-            room = DuelRoom.objects.get(pk=room_id)
-            room.status = 'finished'
-            room.finished_at = timezone.now()
-            room.save(update_fields=['status', 'finished_at'])
-            invalidate_room_cache(code)
-            channel_layer = get_channel_layer_instance()
-            async_to_sync(get_channel_layer_instance().group_send)(
-                f'duel_{code}',
-                {'type': 'duel_judged'}
-            )
-        except Exception:
-            pass
-
+        data = DuelRoomSerializer(room).data
+        cache.set(cache_key, data, 5)
+        return Response(data)
 
 class SubmitCodeView(APIView):
     permission_classes = [IsAuthenticated, IsDuelParticipant]
@@ -302,6 +231,8 @@ class SubmitCodeView(APIView):
 
                 award_achievements(room.creator)
                 award_achievements(room.opponent)
+
+                invalidate_leaderboard_cache()
 
                 room.status = 'finished'
                 room.finished_at = timezone.now()
@@ -434,21 +365,24 @@ class DuelHistoryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        rooms = DuelRoom.objects.select_related('creator', 'opponent').filter(
+        rooms = list(DuelRoom.objects.select_related('creator', 'opponent').filter(
+            creator=request.user,
             status='finished'
-        ).filter(
-            creator=request.user
-        ).union(
-            DuelRoom.objects.select_related('creator', 'opponent').filter(
-                status='finished',
-                opponent=request.user
-            )
-        ).order_by('-finished_at')[:20]
+        ).order_by('-finished_at')[:20]) + list(DuelRoom.objects.select_related('creator', 'opponent').filter(
+            opponent=request.user,
+            status='finished'
+        ).order_by('-finished_at')[:20])
+
+        room_ids = [r.id for r in rooms]
+        submissions = Submission.objects.filter(
+            room_id__in=room_ids, player=request.user
+        )
+        submission_map = {s.room_id: s for s in submissions}
 
         data = []
         for room in rooms:
-            opponent = room.opponent if room.creator == request.user else room.creator
-            submission = Submission.objects.filter(room=room, player=request.user).first()
+            opponent = room.opponent if room.creator_id == request.user.id else room.creator
+            submission = submission_map.get(room.id)
             result = 'win' if submission and submission.is_winner else 'loss'
             data.append({
                 'code': room.code,
@@ -505,21 +439,24 @@ class DuelStatsView(APIView):
         losses = user.losses
         win_rate = (wins / total * 100) if total > 0 else 0.0
 
-        recent_rooms = DuelRoom.objects.filter(
+        recent_rooms = list(DuelRoom.objects.select_related('creator', 'opponent').filter(
+            creator=user,
             status='finished'
-        ).filter(
-            creator=user
-        ).union(
-            DuelRoom.objects.filter(
-                status='finished',
-                opponent=user
-            )
-        ).order_by('-finished_at')[:10]
+        ).order_by('-finished_at')[:10]) + list(DuelRoom.objects.select_related('creator', 'opponent').filter(
+            opponent=user,
+            status='finished'
+        ).order_by('-finished_at')[:10])
+
+        room_ids = [r.id for r in recent_rooms]
+        submissions = Submission.objects.filter(
+            room_id__in=room_ids, player=user
+        )
+        submission_map = {s.room_id: s for s in submissions}
 
         recent = []
         for room in recent_rooms:
-            opponent = room.opponent if room.creator == user else room.creator
-            submission = Submission.objects.filter(room=room, player=user).first()
+            opponent = room.opponent if room.creator_id == user.id else room.creator
+            submission = submission_map.get(room.id)
             result = 'win' if submission and submission.is_winner else 'loss'
             recent.append({
                 'code': room.code,
