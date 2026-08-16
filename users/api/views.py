@@ -197,3 +197,64 @@ class ProfileView(APIView):
             }).data,
             'matches': MatchHistorySerializer(matches, many=True).data
         })
+
+
+class StatsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        total = user.total_duels
+        wins = user.wins
+        losses = user.losses
+        win_rate = (wins / total * 100) if total > 0 else 0.0
+
+        return Response({
+            'total_duels': total,
+            'wins': wins,
+            'losses': losses,
+            'win_rate': round(win_rate, 2),
+            'current_streak': user.current_streak,
+            'best_streak': user.best_streak,
+            'xp': user.xp,
+            'level': user.level,
+            'elo': user.elo,
+            'games_played': user.games_played,
+        })
+
+
+class HistoryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        rooms = DuelRoom.objects.select_related('creator', 'opponent').filter(
+            Q(creator=user) | Q(opponent=user),
+            status='finished'
+        ).order_by('-finished_at')[:20]
+
+        room_ids = [r.id for r in rooms]
+        submissions = Submission.objects.filter(
+            room_id__in=room_ids, player=user
+        ).select_related('room')
+        submission_map = {s.room_id: s for s in submissions}
+
+        matches = []
+        for room in rooms:
+            opponent = room.opponent if room.creator_id == user.id else room.creator
+            submission = submission_map.get(room.id)
+            result = 'win' if submission and submission.is_winner else 'loss'
+            score = submission.score if submission else 0.0
+
+            matches.append({
+                'code': room.code,
+                'opponent': opponent.username if opponent else 'Unknown',
+                'result': result,
+                'score': score,
+                'language': room.language,
+                'difficulty': room.difficulty,
+                'duration': room.duration if hasattr(room, 'duration') else 180,
+                'finished_at': room.finished_at,
+            })
+
+        return Response(matches)

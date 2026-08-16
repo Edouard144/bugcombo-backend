@@ -224,8 +224,42 @@ class SubmitCodeView(APIView):
                 # tie: neither player gets a win/loss, streaks unchanged
                 room.creator.total_duels += 1
                 room.opponent.total_duels += 1
-                room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
-                room.opponent.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
+                room.creator.games_played += 1
+                room.opponent.games_played += 1
+
+                # Award XP (base 10 + bonus for win)
+                xp_gain_creator = 10
+                xp_gain_opponent = 10
+                if winner == 'player1':
+                    xp_gain_creator = 20
+                elif winner == 'player2':
+                    xp_gain_opponent = 20
+                room.creator.xp += xp_gain_creator
+                room.opponent.xp += xp_gain_opponent
+                room.creator.level = (room.creator.xp // 100) + 1
+                room.opponent.level = (room.opponent.xp // 100) + 1
+
+                # Update ELO (simple implementation)
+                k = 32
+                creator_elo = room.creator.elo
+                opponent_elo = room.opponent.elo
+                expected_creator = 1 / (1 + 10 ** ((opponent_elo - creator_elo) / 400))
+                expected_opponent = 1 / (1 + 10 ** ((creator_elo - opponent_elo) / 400))
+                if winner == 'player1':
+                    room.creator.elo = int(creator_elo + k * (1 - expected_creator))
+                    room.opponent.elo = int(opponent_elo + k * (0 - expected_opponent))
+                elif winner == 'player2':
+                    room.creator.elo = int(creator_elo + k * (0 - expected_creator))
+                    room.opponent.elo = int(opponent_elo + k * (1 - expected_opponent))
+
+                room.creator.save(update_fields=[
+                    'wins', 'losses', 'total_duels', 'current_streak', 'best_streak',
+                    'last_win_at', 'games_played', 'xp', 'level', 'elo'
+                ])
+                room.opponent.save(update_fields=[
+                    'wins', 'losses', 'total_duels', 'current_streak', 'best_streak',
+                    'last_win_at', 'games_played', 'xp', 'level', 'elo'
+                ])
 
                 award_achievements(room.creator)
                 award_achievements(room.opponent)
