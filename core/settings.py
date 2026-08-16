@@ -27,9 +27,10 @@ INSTALLED_APPS = [
     'users',
     'duels',
     'bugs',
+    'chat',
     'notifications',
     'achievements',
-    'chat',
+    'audit',
 ]
 
 MIDDLEWARE = [
@@ -135,9 +136,40 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'API for DebugDuel - a competitive debugging platform',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': True,
+        'defaultModelsExpandDepth': 1,
+        'defaultModelExpandDepth': 1,
+        'tryItOutEnabled': True,
+        'syntaxHighlight': {
+            'activate': True,
+            'theme': 'monokai',
+        },
+    },
+    'COMPONENT_SPLIT_REQUEST': True,
+    'TAGS': [
+        {'name': 'Auth', 'description': 'Authentication and registration endpoints'},
+        {'name': 'Duels', 'description': 'Duel room management, joining, submissions, and judging'},
+        {'name': 'Bugs', 'description': 'Bug CRUD, featured, random, import/export'},
+        {'name': 'Chat', 'description': 'Duel chat history and management'},
+        {'name': 'Notifications', 'description': 'User notifications and preferences'},
+        {'name': 'Achievements', 'description': 'User achievements and progression'},
+        {'name': 'Audit', 'description': 'Audit logs and statistics (admin only)'},
+        {'name': 'Users', 'description': 'User profiles, stats, leaderboards, history'},
+    ],
+    'SECURITY_DEFINITIONS': {
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header',
+            'description': 'JWT token. Format: Bearer <access_token>',
+        }
+    },
 }
 
-FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173,http://localhost:8081,https://bugcomboo.onrender.com')
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in FRONTEND_URL.split(',') if origin.strip()]
 CORS_ALLOW_CREDENTIALS = True
 

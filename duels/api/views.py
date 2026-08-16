@@ -8,14 +8,16 @@ from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from django.utils import timezone
+from django.db.models import Prefetch, Q, Count
 from users.models import User
 from achievements.models import Achievement
 from notifications.services import send_notification, send_achievement_unlocked_email, send_duel_judged_email
 from core.permissions import IsDuelParticipant
+from django.core.cache import cache
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes, OpenApiResponse
 import random
 import string
 import time
-import threading
 import logging
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,11 @@ def get_cached_room(code):
 
 def invalidate_room_cache(code):
     _room_cache.pop(code, None)
+    cache.delete(f'room_detail_{code}')
+
+def invalidate_leaderboard_cache():
+    cache.delete('leaderboard_top10')
+    cache.delete('leaderboard_seasonal')
 
 def award_achievements(user):
     conditions = []
@@ -59,6 +66,26 @@ def award_achievements(user):
 class CreateDuelView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Create duel room',
+        description='Create a new duel room with specified language, difficulty, buggy code, and duration. Returns a unique 6-character room code.',
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'language': {'type': 'string', 'enum': ['python', 'javascript', 'java'], 'default': 'python'},
+                    'difficulty': {'type': 'string', 'enum': ['easy', 'medium', 'hard'], 'default': 'easy'},
+                    'buggy_code': {'type': 'string'},
+                    'duration': {'type': 'integer', 'enum': [60, 180, 300], 'default': 180}
+                }
+            }
+        },
+        responses={
+            201: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room created'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Invalid duration or request'),
+        }
+    )
     def post(self, request):
         language = request.data.get('language', 'python')
         difficulty = request.data.get('difficulty', 'easy')
@@ -87,6 +114,19 @@ class CreateDuelView(APIView):
 class JoinDuelView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Join duel room',
+        description='Join an existing waiting duel room as the opponent. Room status changes to active and a notification is sent to the creator.',
+        parameters=[
+            OpenApiParameter(name='code', description='Room code', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Joined successfully'),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room not found or already started'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Cannot join own room'),
+        }
+    )
     def post(self, request, code):
         try:
             room = DuelRoom.objects.select_related('creator').get(code=code, status='waiting')
@@ -114,101 +154,56 @@ class JoinDuelView(APIView):
 class DuelDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Get duel details',
+        description='Retrieve details of a duel room including participants, status, language, difficulty, and buggy code. Results are cached for 5 seconds.',
+        parameters=[
+            OpenApiParameter(name='code', description='Room code', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            200: OpenApiResponse(response=DuelRoomSerializer),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room not found'),
+        }
+    )
     def get(self, request, code):
+        cache_key = f'room_detail_{code}'
+        cached = cache.get(cache_key)
+        if cached:
+            return Response(cached)
         try:
             room = get_cached_room(code)
         except DuelRoom.DoesNotExist:
             return Response({'error': 'Room not found'}, status=status.HTTP_404_NOT_FOUND)
-        return Response(DuelRoomSerializer(room).data)
-
-def _run_judging(room_id, code):
-    try:
-        room = DuelRoom.objects.select_related('creator', 'opponent').get(pk=room_id)
-        submissions = list(Submission.objects.filter(room=room).select_related('player'))
-        if len(submissions) != 2:
-            return
-
-        creator_sub = next(s for s in submissions if s.player_id == room.creator_id)
-        opponent_sub = next(s for s in submissions if s.player_id == room.opponent_id)
-
-        result = judge_submissions(
-            buggy_code=room.buggy_code,
-            submission1=creator_sub.code,
-            submission2=opponent_sub.code,
-            language=room.language
-        )
-        winner = result['winner']
-        p1 = result['player1']
-        p2 = result['player2']
-
-        Submission.objects.filter(pk=creator_sub.pk).update(
-            correctness=p1['correctness'],
-            cleanliness=p1['cleanliness'],
-            efficiency=p1['efficiency'],
-            security=p1['security'],
-            score=p1['score'],
-            ai_feedback=p1['feedback'],
-            is_winner=winner == 'player1',
-        )
-        Submission.objects.filter(pk=opponent_sub.pk).update(
-            correctness=p2['correctness'],
-            cleanliness=p2['cleanliness'],
-            efficiency=p2['efficiency'],
-            security=p2['security'],
-            score=p2['score'],
-            ai_feedback=p2['feedback'],
-            is_winner=winner == 'player2',
-        )
-
-        if winner == 'player1':
-            room.creator.wins += 1
-            room.creator.current_streak += 1
-            room.creator.best_streak = max(room.creator.best_streak, room.creator.current_streak)
-            room.creator.last_win_at = timezone.now()
-            room.opponent.losses += 1
-            room.opponent.current_streak = 0
-        elif winner == 'player2':
-            room.opponent.wins += 1
-            room.opponent.current_streak += 1
-            room.opponent.best_streak = max(room.opponent.best_streak, room.opponent.current_streak)
-            room.opponent.last_win_at = timezone.now()
-            room.creator.losses += 1
-            room.creator.current_streak = 0
-        room.creator.total_duels += 1
-        room.opponent.total_duels += 1
-        room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
-        room.opponent.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
-
-        room.status = 'finished'
-        room.finished_at = timezone.now()
-        room.save(update_fields=['status', 'finished_at'])
-        invalidate_room_cache(code)
-
-        channel_layer = get_channel_layer_instance()
-        async_to_sync(get_channel_layer_instance().group_send)(
-            f'duel_{code}',
-            {'type': 'duel_judged'}
-        )
-    except Exception as e:
-        logger.exception("Judging failed for room %s", code)
-        try:
-            room = DuelRoom.objects.get(pk=room_id)
-            room.status = 'finished'
-            room.finished_at = timezone.now()
-            room.save(update_fields=['status', 'finished_at'])
-            invalidate_room_cache(code)
-            channel_layer = get_channel_layer_instance()
-            async_to_sync(get_channel_layer_instance().group_send)(
-                f'duel_{code}',
-                {'type': 'duel_judged'}
-            )
-        except Exception:
-            pass
-
+        data = DuelRoomSerializer(room).data
+        cache.set(cache_key, data, 5)
+        return Response(data)
 
 class SubmitCodeView(APIView):
     permission_classes = [IsAuthenticated, IsDuelParticipant]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Submit code',
+        description='Submit a code fix for a duel. Triggers AI judging when both players have submitted. Only participants can submit.',
+        parameters=[
+            OpenApiParameter(name='code', description='Room code', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'code': {'type': 'string', 'description': 'Fixed code'}
+                },
+                'required': ['code']
+            }
+        },
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Submission received'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room not active or code empty'),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room not found'),
+        }
+    )
     def post(self, request, code):
         try:
             room = get_cached_room(code)
@@ -297,11 +292,47 @@ class SubmitCodeView(APIView):
                 # tie: neither player gets a win/loss, streaks unchanged
                 room.creator.total_duels += 1
                 room.opponent.total_duels += 1
-                room.creator.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
-                room.opponent.save(update_fields=['wins', 'losses', 'total_duels', 'current_streak', 'best_streak', 'last_win_at'])
+                room.creator.games_played += 1
+                room.opponent.games_played += 1
+
+                # Award XP (base 10 + bonus for win)
+                xp_gain_creator = 10
+                xp_gain_opponent = 10
+                if winner == 'player1':
+                    xp_gain_creator = 20
+                elif winner == 'player2':
+                    xp_gain_opponent = 20
+                room.creator.xp += xp_gain_creator
+                room.opponent.xp += xp_gain_opponent
+                room.creator.level = (room.creator.xp // 100) + 1
+                room.opponent.level = (room.opponent.xp // 100) + 1
+
+                # Update ELO (simple implementation)
+                k = 32
+                creator_elo = room.creator.elo
+                opponent_elo = room.opponent.elo
+                expected_creator = 1 / (1 + 10 ** ((opponent_elo - creator_elo) / 400))
+                expected_opponent = 1 / (1 + 10 ** ((creator_elo - opponent_elo) / 400))
+                if winner == 'player1':
+                    room.creator.elo = int(creator_elo + k * (1 - expected_creator))
+                    room.opponent.elo = int(opponent_elo + k * (0 - expected_opponent))
+                elif winner == 'player2':
+                    room.creator.elo = int(creator_elo + k * (0 - expected_creator))
+                    room.opponent.elo = int(opponent_elo + k * (1 - expected_opponent))
+
+                room.creator.save(update_fields=[
+                    'wins', 'losses', 'total_duels', 'current_streak', 'best_streak',
+                    'last_win_at', 'games_played', 'xp', 'level', 'elo'
+                ])
+                room.opponent.save(update_fields=[
+                    'wins', 'losses', 'total_duels', 'current_streak', 'best_streak',
+                    'last_win_at', 'games_played', 'xp', 'level', 'elo'
+                ])
 
                 award_achievements(room.creator)
                 award_achievements(room.opponent)
+
+                invalidate_leaderboard_cache()
 
                 room.status = 'finished'
                 room.finished_at = timezone.now()
@@ -336,6 +367,18 @@ class SubmitCodeView(APIView):
 class RoomSubmissionsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Room submissions',
+        description='Get all submissions for a specific duel room including scores, criteria breakdown, and AI feedback.',
+        parameters=[
+            OpenApiParameter(name='code', description='Room code', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            200: OpenApiResponse(response=SubmissionSerializer(many=True)),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room not found'),
+        }
+    )
     def get(self, request, code):
         try:
             room = get_cached_room(code)
@@ -348,6 +391,18 @@ class RoomSubmissionsView(APIView):
 class RematchView(APIView):
     permission_classes = [IsAuthenticated, IsDuelParticipant]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Create rematch',
+        description='Create a new duel room with the same language, difficulty, buggy code, and duration as the original. Only participants can create a rematch.',
+        parameters=[
+            OpenApiParameter(name='code', description='Original room code', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            201: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Rematch room created'),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Original room not found'),
+        }
+    )
     def post(self, request, code):
         try:
             old_room = DuelRoom.objects.get(code=code)
@@ -375,6 +430,12 @@ class RematchView(APIView):
 class OpenLobbyView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Open lobby',
+        description='List all available duel rooms that are currently waiting for an opponent. Returns up to 50 most recent rooms.',
+        responses={200: OpenApiResponse(response=DuelRoomSerializer(many=True))}
+    )
     def get(self, request):
         rooms = DuelRoom.objects.filter(status='waiting').select_related('creator').order_by('-created_at')[:50]
         data = DuelRoomSerializer(rooms, many=True).data
@@ -383,6 +444,20 @@ class OpenLobbyView(APIView):
 class ForfeitView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Forfeit duel',
+        description='Forfeit a duel. The opponent wins by default. Only the creator or opponent can forfeit.',
+        parameters=[
+            OpenApiParameter(name='code', description='Room code', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Forfeit successful'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room cannot be forfeited'),
+            403: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Not a participant'),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room not found'),
+        }
+    )
     def post(self, request, code):
         try:
             room = DuelRoom.objects.select_related('creator', 'opponent').get(code=code)
@@ -433,22 +508,31 @@ class ForfeitView(APIView):
 class DuelHistoryView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Duel history',
+        description='Get the last 20 finished duels for the authenticated user with opponent, result, score, and language.',
+        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+    )
     def get(self, request):
-        rooms = DuelRoom.objects.select_related('creator', 'opponent').filter(
+        rooms = list(DuelRoom.objects.select_related('creator', 'opponent').filter(
+            creator=request.user,
             status='finished'
-        ).filter(
-            creator=request.user
-        ).union(
-            DuelRoom.objects.select_related('creator', 'opponent').filter(
-                status='finished',
-                opponent=request.user
-            )
-        ).order_by('-finished_at')[:20]
+        ).order_by('-finished_at')[:20]) + list(DuelRoom.objects.select_related('creator', 'opponent').filter(
+            opponent=request.user,
+            status='finished'
+        ).order_by('-finished_at')[:20])
+
+        room_ids = [r.id for r in rooms]
+        submissions = Submission.objects.filter(
+            room_id__in=room_ids, player=request.user
+        )
+        submission_map = {s.room_id: s for s in submissions}
 
         data = []
         for room in rooms:
-            opponent = room.opponent if room.creator == request.user else room.creator
-            submission = Submission.objects.filter(room=room, player=request.user).first()
+            opponent = room.opponent if room.creator_id == request.user.id else room.creator
+            submission = submission_map.get(room.id)
             result = 'win' if submission and submission.is_winner else 'loss'
             data.append({
                 'code': room.code,
@@ -464,6 +548,29 @@ class DuelHistoryView(APIView):
 class InviteView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Invite user to duel',
+        description='Send a duel invitation to a specific user by username. Only the room creator can invite.',
+        parameters=[
+            OpenApiParameter(name='code', description='Room code', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'username': {'type': 'string', 'description': 'Username of the user to invite'}
+                },
+                'required': ['username']
+            }
+        },
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Invite sent'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Invalid request or cannot invite self'),
+            403: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Only creator can invite'),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room or user not found'),
+        }
+    )
     def post(self, request, code):
         try:
             room = DuelRoom.objects.get(code=code, status='waiting')
@@ -498,6 +605,12 @@ class InviteView(APIView):
 class DuelStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Duels'],
+        summary='Duel statistics',
+        description='Get detailed duel statistics for the authenticated user including win rate, streaks, and recent matches.',
+        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+    )
     def get(self, request):
         user = request.user
         total = user.total_duels
@@ -505,21 +618,24 @@ class DuelStatsView(APIView):
         losses = user.losses
         win_rate = (wins / total * 100) if total > 0 else 0.0
 
-        recent_rooms = DuelRoom.objects.filter(
+        recent_rooms = list(DuelRoom.objects.select_related('creator', 'opponent').filter(
+            creator=user,
             status='finished'
-        ).filter(
-            creator=user
-        ).union(
-            DuelRoom.objects.filter(
-                status='finished',
-                opponent=user
-            )
-        ).order_by('-finished_at')[:10]
+        ).order_by('-finished_at')[:10]) + list(DuelRoom.objects.select_related('creator', 'opponent').filter(
+            opponent=user,
+            status='finished'
+        ).order_by('-finished_at')[:10])
+
+        room_ids = [r.id for r in recent_rooms]
+        submissions = Submission.objects.filter(
+            room_id__in=room_ids, player=user
+        )
+        submission_map = {s.room_id: s for s in submissions}
 
         recent = []
         for room in recent_rooms:
-            opponent = room.opponent if room.creator == user else room.creator
-            submission = Submission.objects.filter(room=room, player=user).first()
+            opponent = room.opponent if room.creator_id == user.id else room.creator
+            submission = submission_map.get(room.id)
             result = 'win' if submission and submission.is_winner else 'loss'
             recent.append({
                 'code': room.code,

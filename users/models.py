@@ -22,9 +22,14 @@ class User(AbstractUser):
     current_streak = models.IntegerField(default=0)
     best_streak = models.IntegerField(default=0)
     last_win_at = models.DateTimeField(null=True, blank=True)
-    achievements = models.ManyToManyField('achievements.Achievement', related_name='users', blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
     achievements = models.ManyToManyField('achievements.Achievement', blank=True, related_name='users')
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    # Gamification
+    xp = models.PositiveIntegerField(default=0)
+    level = models.PositiveIntegerField(default=1)
+    elo = models.IntegerField(default=1000)
+    games_played = models.IntegerField(default=0)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username']
