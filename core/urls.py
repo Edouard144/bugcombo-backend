@@ -17,7 +17,7 @@ def health_check(request):
     import django.db
     health = {
         'status': 'ok',
-        'project': 'DebugDuel Backend',
+        'project': 'BugCombo Backend',
         'version': '1.0.0',
         'api_version': 'v1',
         'checks': {},

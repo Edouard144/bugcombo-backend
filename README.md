@@ -1,6 +1,6 @@
-# DebugDuel Backend
+# BugCombo Backend
 
-Django + Supabase backend for DebugDuel — a real-time competitive coding platform where developers race to fix bugs, judged by AI.
+Django + Supabase backend for BugCombo — a real-time competitive coding platform where developers race to fix bugs, judged by AI.
 
 ## Stack
 

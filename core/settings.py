@@ -132,8 +132,8 @@ SIMPLE_JWT = {
 }
 
 SPECTACULAR_SETTINGS = {
-    'TITLE': 'DebugDuel API',
-    'DESCRIPTION': 'API for DebugDuel - a competitive debugging platform',
+    'TITLE': 'BugCombo API',
+    'DESCRIPTION': 'API for BugCombo - a competitive debugging platform',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'SWAGGER_UI_SETTINGS': {
@@ -240,7 +240,7 @@ else:
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-            'LOCATION': 'debugduel-cache',
+            'LOCATION': 'bugcombo-cache',
         }
     }
 
