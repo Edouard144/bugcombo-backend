@@ -10,24 +10,14 @@ services:
       - key: DEBUG
         value: "False"
       - key: DATABASE_URL
-        fromDatabase:
-          name: bugcombo-db
-          property: connectionString
+        value: postgresql://neondb_owner:npg_mxBLMorJ94gd@ep-round-term-at140051-pooler.c-9.us-east-1.aws.neon.tech:5432/neondb?sslmode=require
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
         value: "llama-3.3-70b-versatile"
       - key: GOOGLE_CLIENT_ID
         sync: false
-      - key: WEBHOOK_URL
-        value: ""
-      - key: REDIS_URL
-        sync: false
       - key: FRONTEND_URL
         value: "https://bugcomboo.onrender.com"
-
-databases:
-  - name: bugcombo-db
-    plan: free
-    databaseName: bugcombo
-    user: bugcombo
+      - key: REDIS_URL
+        sync: false
