@@ -4,7 +4,7 @@ from django.conf import settings
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
 
-app = Celery('debugduel')
+app = Celery('bugcombo')
 
 app.config_from_object('django.conf:settings', namespace='CELERY')
 

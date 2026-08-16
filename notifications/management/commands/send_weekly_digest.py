@@ -31,12 +31,12 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            subject = f'DebugDuel Weekly Digest: {unread_count} unread notifications'
+            subject = f'BugCombo Weekly Digest: {unread_count} unread notifications'
             message = (
                 f'Hi {user.username},\n\n'
                 f'You have {unread_count} unread notifications.\n'
                 f'Log in to check them out.\n\n'
-                f'- DebugDuel Team'
+                f'- BugCombo Team'
             )
 
             if options['dry_run']:
@@ -46,7 +46,7 @@ class Command(BaseCommand):
                 send_mail(
                     subject=subject,
                     message=message,
-                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@debugduel.com'),
+                    from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@bugcombo.com'),
                     recipient_list=[user.email],
                     fail_silently=True,
                 )

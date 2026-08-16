@@ -26,7 +26,7 @@ def send_achievement_unlocked_email(user, achievement_name):
         send_mail(
             subject=subject,
             message=message,
-            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@debugduel.com'),
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@bugcombo.com'),
             recipient_list=[user.email],
             fail_silently=True,
         )
@@ -42,7 +42,7 @@ def send_duel_judged_email(user, room_code, message):
         send_mail(
             subject=subject,
             message=message,
-            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@debugduel.com'),
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@bugcombo.com'),
             recipient_list=[user.email],
             fail_silently=True,
         )
