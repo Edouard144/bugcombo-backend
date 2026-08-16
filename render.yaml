@@ -10,7 +10,7 @@ services:
       - key: DEBUG
         value: "False"
       - key: DATABASE_URL
-        value: postgresql://neondb_owner:npg_mxBLMorJ94gd@ep-round-term-at140051-pooler.c-9.us-east-1.aws.neon.tech:5432/neondb?sslmode=require
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
