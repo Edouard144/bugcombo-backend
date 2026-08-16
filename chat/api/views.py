@@ -6,11 +6,26 @@ from django.core.cache import cache
 from chat.models import ChatMessage
 from .serializers import ChatMessageSerializer
 from duels.models import DuelRoom
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes, OpenApiResponse
 
 
 class ChatHistoryView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Chat'],
+        summary='Chat history',
+        description='Get chat messages for a duel room. Only participants of the duel can access the chat.',
+        parameters=[
+            OpenApiParameter(name='code', description='Room code', required=True, type=str, location=OpenApiParameter.PATH),
+            OpenApiParameter(name='limit', description='Max messages to return', required=False, type=int)
+        ],
+        responses={
+            200: OpenApiResponse(response=ChatMessageSerializer(many=True)),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room not found'),
+            403: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Not a participant'),
+        }
+    )
     def get(self, request, code):
         try:
             room = DuelRoom.objects.get(code=code)
@@ -29,6 +44,19 @@ class ChatHistoryView(APIView):
 class ChatClearView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Chat'],
+        summary='Clear chat history',
+        description='Delete all chat messages for a duel room. Only participants can clear the chat.',
+        parameters=[
+            OpenApiParameter(name='code', description='Room code', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            204: None,
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Room not found'),
+            403: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Not a participant'),
+        }
+    )
     def delete(self, request, code):
         try:
             room = DuelRoom.objects.get(code=code)
