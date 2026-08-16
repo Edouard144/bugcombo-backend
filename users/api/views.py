@@ -7,12 +7,13 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch, Q, Count
 from django.utils import timezone
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from duels.models import DuelRoom, Submission
 from .serializers import RegisterSerializer, UserSerializer, MatchHistorySerializer, ProfileStatsSerializer
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes, OpenApiResponse
 import hashlib
 
 User = get_user_model()
@@ -37,6 +38,16 @@ class RegisterView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [RegisterThrottle]
 
+    @extend_schema(
+        tags=['Auth'],
+        summary='Register a new user',
+        description='Create a new user account with email, username, and password. Returns JWT access and refresh tokens on successful registration.',
+        request=RegisterSerializer,
+        responses={
+            201: OpenApiResponse(response=OpenApiTypes.OBJECT, description='User created successfully'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Validation error'),
+        }
+    )
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         if serializer.is_valid():
@@ -54,12 +65,24 @@ class RegisterView(APIView):
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Auth'],
+        summary='Get current user profile',
+        description='Retrieve the authenticated user profile information.',
+        responses={200: OpenApiResponse(response=UserSerializer)}
+    )
     def get(self, request):
         return Response(UserSerializer(request.user).data)
 
 class LeaderboardView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Users'],
+        summary='Top 10 leaderboard',
+        description='Get the top 10 players ranked by wins and total duels. Results are cached for 60 seconds.',
+        responses={200: OpenApiResponse(response=UserSerializer(many=True))}
+    )
     def get(self, request):
         cache_key = 'leaderboard_top10'
         data = cache.get(cache_key)
@@ -75,6 +98,12 @@ def invalidate_leaderboard_cache():
 class SeasonalLeaderboardView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Users'],
+        summary='Seasonal leaderboard',
+        description='Get the top 10 players for the current month ranked by wins. Results are cached for 60 seconds.',
+        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+    )
     def get(self, request):
         cache_key = 'leaderboard_seasonal'
         data = cache.get(cache_key)
@@ -113,6 +142,24 @@ class GoogleLoginView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [GoogleLoginThrottle]
 
+    @extend_schema(
+        tags=['Auth'],
+        summary='Login with Google',
+        description='Authenticate using a Google OAuth2 ID token. Creates a new user account if one does not already exist with the provided email.',
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'token': {'type': 'string', 'description': 'Google OAuth2 ID token'}
+                },
+                'required': ['token']
+            }
+        },
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Login successful'),
+            401: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Invalid Google token'),
+        }
+    )
     def post(self, request):
         token = request.data.get('token')
         if not token:
@@ -150,6 +197,18 @@ class GoogleLoginView(APIView):
 class ProfileView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Users'],
+        summary='Public user profile',
+        description='Get a public profile for a user including stats and recent match history.',
+        parameters=[
+            OpenApiParameter(name='username', description='Username', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Profile data'),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='User not found'),
+        }
+    )
     def get(self, request, username):
         try:
             user = User.objects.get(username=username)
@@ -161,13 +220,11 @@ class ProfileView(APIView):
         losses = user.losses
         win_rate = (wins / total * 100) if total > 0 else 0.0
 
-        # Use prefetch to avoid N+1
         rooms = DuelRoom.objects.select_related('creator', 'opponent').filter(
             Q(creator=user) | Q(opponent=user),
             status='finished'
         ).order_by('-finished_at')[:10]
 
-        # Prefetch submissions to avoid N+1 in the loop
         room_ids = [r.id for r in rooms]
         submissions = Submission.objects.filter(
             room_id__in=room_ids, player=user
@@ -202,6 +259,12 @@ class ProfileView(APIView):
 class StatsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Users'],
+        summary='User statistics',
+        description='Get detailed statistics for the authenticated user including ELO, XP, streaks, and win rate.',
+        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+    )
     def get(self, request):
         user = request.user
         total = user.total_duels
@@ -226,6 +289,12 @@ class StatsView(APIView):
 class HistoryView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=['Users'],
+        summary='Duel history',
+        description='Get the last 20 finished duels for the authenticated user with results and scores.',
+        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+    )
     def get(self, request):
         user = request.user
         rooms = DuelRoom.objects.select_related('creator', 'opponent').filter(

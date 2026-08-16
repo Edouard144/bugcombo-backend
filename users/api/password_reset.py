@@ -9,12 +9,28 @@ from django.utils.encoding import force_bytes
 from django.core.mail import send_mail
 from django.conf import settings
 from .serializers import UserSerializer
+from drf_spectacular.utils import extend_schema, OpenApiTypes, OpenApiResponse
 
 User = get_user_model()
 
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Auth'],
+        summary='Request password reset',
+        description='Send a password reset email to the user. Returns success regardless of whether the email exists to prevent user enumeration.',
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'email': {'type': 'string', 'format': 'email'}
+                },
+                'required': ['email']
+            }
+        },
+        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+    )
     def post(self, request):
         email = request.data.get('email')
         if not email:
@@ -43,6 +59,23 @@ class PasswordResetRequestView(APIView):
 class PasswordResetConfirmView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Auth'],
+        summary='Confirm password reset',
+        description='Reset the user password using the uid and token received via email.',
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'uid': {'type': 'string'},
+                    'token': {'type': 'string'},
+                    'new_password': {'type': 'string'}
+                },
+                'required': ['uid', 'token', 'new_password']
+            }
+        },
+        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+    )
     def post(self, request):
         uid = request.data.get('uid')
         token = request.data.get('token')
