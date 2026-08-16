@@ -9,10 +9,29 @@ import csv
 from ..models import Bug
 from .serializers import BugSerializer, BugListSerializer
 from core.permissions import IsBugCreator, IsAdminOrReadOnly
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes, OpenApiResponse
 
 class BugListCreateView(APIView):
     permission_classes = [IsAdminOrReadOnly]
 
+    @extend_schema(
+        tags=['Bugs'],
+        summary='List and create bugs',
+        description='List bugs with optional filtering by language, difficulty, and search. Admin users can create new bugs. Supports pagination and ordering.',
+        parameters=[
+            OpenApiParameter(name='language', description='Filter by programming language', required=False, type=str),
+            OpenApiParameter(name='difficulty', description='Filter by difficulty', required=False, type=str),
+            OpenApiParameter(name='search', description='Search in title', required=False, type=str),
+            OpenApiParameter(name='ordering', description='Order by field', required=False, type=str),
+            OpenApiParameter(name='page', description='Page number', required=False, type=int),
+            OpenApiParameter(name='limit', description='Items per page', required=False, type=int),
+        ],
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Paginated bug list'),
+            201: OpenApiResponse(response=BugSerializer),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Validation error'),
+        }
+    )
     def get(self, request):
         bugs = Bug.objects.all()
 
@@ -47,6 +66,16 @@ class BugListCreateView(APIView):
             'results': serializer.data
         })
 
+    @extend_schema(
+        tags=['Bugs'],
+        summary='Create bug',
+        description='Create a new bug. Admin only.',
+        request=BugSerializer,
+        responses={
+            201: OpenApiResponse(response=BugSerializer),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Validation error'),
+        }
+    )
     def post(self, request):
         serializer = BugSerializer(data=request.data)
         if serializer.is_valid():
@@ -57,6 +86,18 @@ class BugListCreateView(APIView):
 class BugDetailView(APIView):
     permission_classes = [IsAuthenticated, IsBugCreator]
 
+    @extend_schema(
+        tags=['Bugs'],
+        summary='Bug detail',
+        description='Retrieve, update, or delete a specific bug. Only the bug creator or admin can modify or delete.',
+        parameters=[
+            OpenApiParameter(name='pk', description='Bug UUID', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            200: OpenApiResponse(response=BugSerializer),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Bug not found'),
+        }
+    )
     def get(self, request, pk):
         try:
             bug = Bug.objects.get(pk=pk)
@@ -65,6 +106,19 @@ class BugDetailView(APIView):
         except Bug.DoesNotExist:
             return Response({'error': 'Bug not found'}, status=status.HTTP_404_NOT_FOUND)
 
+    @extend_schema(
+        tags=['Bugs'],
+        summary='Update bug',
+        description='Partially update a bug. Only the bug creator or admin can update.',
+        parameters=[
+            OpenApiParameter(name='pk', description='Bug UUID', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        request=BugSerializer,
+        responses={
+            200: OpenApiResponse(response=BugSerializer),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Bug not found'),
+        }
+    )
     def put(self, request, pk):
         try:
             bug = Bug.objects.get(pk=pk)
@@ -77,6 +131,18 @@ class BugDetailView(APIView):
         except Bug.DoesNotExist:
             return Response({'error': 'Bug not found'}, status=status.HTTP_404_NOT_FOUND)
 
+    @extend_schema(
+        tags=['Bugs'],
+        summary='Delete bug',
+        description='Delete a bug permanently. Only the bug creator or admin can delete.',
+        parameters=[
+            OpenApiParameter(name='pk', description='Bug UUID', required=True, type=str, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            204: None,
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Bug not found'),
+        }
+    )
     def delete(self, request, pk):
         try:
             bug = Bug.objects.get(pk=pk)
@@ -89,6 +155,12 @@ class BugDetailView(APIView):
 class FeaturedBugsView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Bugs'],
+        summary='Featured bugs',
+        description='Get the top 10 bugs ranked by average score and usage count.',
+        responses={200: OpenApiResponse(response=BugListSerializer(many=True))}
+    )
     def get(self, request):
         bugs = Bug.objects.order_by('-avg_score', '-times_used')[:10]
         serializer = BugListSerializer(bugs, many=True)
@@ -97,6 +169,19 @@ class FeaturedBugsView(APIView):
 class RandomBugView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=['Bugs'],
+        summary='Random bug',
+        description='Get a random bug, optionally filtered by language and difficulty.',
+        parameters=[
+            OpenApiParameter(name='language', description='Filter by programming language', required=False, type=str),
+            OpenApiParameter(name='difficulty', description='Filter by difficulty', required=False, type=str),
+        ],
+        responses={
+            200: OpenApiResponse(response=BugListSerializer),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='No bugs found'),
+        }
+    )
     def get(self, request):
         language = request.query_params.get('language')
         difficulty = request.query_params.get('difficulty')
@@ -115,6 +200,18 @@ class RandomBugView(APIView):
 class BugExportView(APIView):
     permission_classes = [IsAdminUser]
 
+    @extend_schema(
+        tags=['Bugs'],
+        summary='Export bugs',
+        description='Export all bugs as JSON or CSV file. Admin only.',
+        parameters=[
+            OpenApiParameter(name='format', description='Export format', required=False, type=str, enum=['json', 'csv'])
+        ],
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='File download'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Invalid format'),
+        }
+    )
     def get(self, request):
         fmt = request.query_params.get('format', 'json')
         bugs = Bug.objects.all()
@@ -161,6 +258,27 @@ class BugExportView(APIView):
 class BugImportView(APIView):
     permission_classes = [IsAdminUser]
 
+    @extend_schema(
+        tags=['Bugs'],
+        summary='Import bugs',
+        description='Import bugs from a JSON file. Creates new bugs or updates existing ones by ID. Admin only.',
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'file': {
+                        'type': 'string',
+                        'format': 'binary',
+                        'description': 'JSON file containing bug data'
+                    }
+                }
+            }
+        },
+        responses={
+            201: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Import result with created/updated/skipped counts'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Invalid file or JSON'),
+        }
+    )
     def post(self, request):
         uploaded = request.FILES.get('file')
         if not uploaded:
