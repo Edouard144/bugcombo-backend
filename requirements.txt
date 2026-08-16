@@ -44,7 +44,6 @@ pyOpenSSL==26.3.0
 python-dotenv==1.2.2
 PyYAML==6.0.3
 celery==5.5.2
-django-celery-beat==0.0.1
 redis==8.0.1
 referencing==0.37.0
 requests==2.34.2
