@@ -3,8 +3,15 @@ from django.urls import path, include
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from drf_spectacular.utils import extend_schema, OpenApiTypes, OpenApiResponse
 from core.views import MetricsView
 
+@extend_schema(
+    tags=['Health'],
+    summary='Health check',
+    description='Check the health status of the API including database and cache connectivity.',
+    responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+)
 @api_view(['GET'])
 def health_check(request):
     import django.db
