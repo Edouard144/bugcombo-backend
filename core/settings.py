@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('SECRET_KEY', 'bugcombo-build-time-secret-key-CHANGE-IN-PRODUCTION')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0,.onrender.com').split(',')
 
 INSTALLED_APPS = [
     'daphne',
@@ -172,6 +172,10 @@ SPECTACULAR_SETTINGS = {
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173,http://localhost:8081,https://bugcomboo.onrender.com')
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in FRONTEND_URL.split(',') if origin.strip()]
 CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip() for origin in FRONTEND_URL.split(',') if origin.strip()
+]
+CSRF_TRUSTED_ORIGINS += ['https://*.onrender.com']
 
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
 
