@@ -1,12 +1,15 @@
 from django.urls import path
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from .views import RegisterView, MeView, LeaderboardView, GoogleLoginView, ProfileView, SeasonalLeaderboardView, StatsView, HistoryView
+from .jwt_views import CustomTokenObtainPairView, CustomTokenRefreshView
+from .views import RegisterView, MeView, LeaderboardView, GoogleLoginView, ProfileView, SeasonalLeaderboardView, StatsView, HistoryView, LogoutView
 from .password_reset import PasswordResetRequestView, PasswordResetConfirmView
+from drf_spectacular.utils import extend_schema, OpenApiTypes, OpenApiResponse
+from users.api.serializers import AuthResponseSerializer, TokenRefreshResponseSerializer
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
-    path('login/', TokenObtainPairView.as_view(), name='login'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('login/', CustomTokenObtainPairView.as_view(), name='login'),
+    path('token/refresh/', CustomTokenRefreshView.as_view(), name='token_refresh'),
+    path('logout/', LogoutView.as_view(), name='logout'),
     path('me/', MeView.as_view(), name='me'),
     path('stats/', StatsView.as_view(), name='stats'),
     path('history/', HistoryView.as_view(), name='history'),
