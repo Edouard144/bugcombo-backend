@@ -75,3 +75,21 @@ class MatchDetailSerializer(serializers.ModelSerializer):
             delta = obj.finished_at - obj.started_at
             return int(delta.total_seconds())
         return None
+
+class DuelRecentMatchSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    opponent = serializers.CharField()
+    result = serializers.CharField()
+    score = serializers.FloatField()
+    language = serializers.CharField()
+    difficulty = serializers.CharField()
+    finished_at = serializers.DateTimeField()
+
+class DuelStatsSerializer(serializers.Serializer):
+    total_duels = serializers.IntegerField()
+    wins = serializers.IntegerField()
+    losses = serializers.IntegerField()
+    win_rate = serializers.FloatField()
+    current_streak = serializers.IntegerField()
+    best_streak = serializers.IntegerField()
+    recent_matches = DuelRecentMatchSerializer(many=True)
