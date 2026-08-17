@@ -3,7 +3,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.throttling import AnonRateThrottle
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken, OutstandingToken, BlacklistedToken
+from rest_framework_simplejwt.exceptions import TokenError
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.cache import cache
@@ -12,7 +13,7 @@ from django.utils import timezone
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from duels.models import DuelRoom, Submission
-from .serializers import RegisterSerializer, UserSerializer, MatchHistorySerializer, ProfileStatsSerializer
+from .serializers import RegisterSerializer, UserSerializer, UserUpdateSerializer, AuthResponseSerializer, ProfileStatsSerializer, ProfileResponseSerializer, UserStatsSerializer, MatchHistorySerializer, SeasonalLeaderboardEntrySerializer
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes, OpenApiResponse
 import hashlib
 
@@ -44,7 +45,7 @@ class RegisterView(APIView):
         description='Create a new user account with email, username, and password. Returns JWT access and refresh tokens on successful registration.',
         request=RegisterSerializer,
         responses={
-            201: OpenApiResponse(response=OpenApiTypes.OBJECT, description='User created successfully'),
+            201: OpenApiResponse(response=AuthResponseSerializer, description='User created successfully'),
             400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Validation error'),
         }
     )
@@ -55,10 +56,8 @@ class RegisterView(APIView):
             refresh = RefreshToken.for_user(user)
             return Response({
                 'user': UserSerializer(user).data,
-                'tokens': {
-                    'refresh': str(refresh),
-                    'access': str(refresh.access_token),
-                }
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -102,7 +101,7 @@ class SeasonalLeaderboardView(APIView):
         tags=['Users'],
         summary='Seasonal leaderboard',
         description='Get the top 10 players for the current month ranked by wins. Results are cached for 60 seconds.',
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+        responses={200: OpenApiResponse(response=SeasonalLeaderboardEntrySerializer(many=True))}
     )
     def get(self, request):
         cache_key = 'leaderboard_seasonal'
@@ -156,7 +155,7 @@ class GoogleLoginView(APIView):
             }
         },
         responses={
-            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Login successful'),
+            200: OpenApiResponse(response=AuthResponseSerializer, description='Login successful'),
             401: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Invalid Google token'),
         }
     )
@@ -187,10 +186,8 @@ class GoogleLoginView(APIView):
         refresh = RefreshToken.for_user(user)
         return Response({
             'user': UserSerializer(user).data,
-            'tokens': {
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-            },
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
             'created': created,
         })
 
@@ -205,7 +202,7 @@ class ProfileView(APIView):
             OpenApiParameter(name='username', description='Username', required=True, type=str, location=OpenApiParameter.PATH)
         ],
         responses={
-            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Profile data'),
+            200: OpenApiResponse(response=ProfileResponseSerializer, description='Profile data'),
             404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='User not found'),
         }
     )
@@ -256,6 +253,73 @@ class ProfileView(APIView):
         })
 
 
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Auth'],
+        summary='Get current user profile',
+        description='Retrieve the authenticated user profile information.',
+        responses={200: OpenApiResponse(response=UserSerializer)}
+    )
+    def get(self, request):
+        return Response(UserSerializer(request.user).data)
+
+    @extend_schema(
+        tags=['Auth'],
+        summary='Update current user profile',
+        description='Update the authenticated user profile. Supports updating username and bio.',
+        request=UserUpdateSerializer,
+        responses={
+            200: OpenApiResponse(response=UserSerializer, description='Profile updated successfully'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Validation error'),
+        }
+    )
+    def patch(self, request):
+        serializer = UserUpdateSerializer(request.user, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(UserSerializer(request.user).data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Auth'],
+        summary='Logout',
+        description='Blacklist the current refresh token, invalidating it. Client should also discard the access token.',
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'refresh': {'type': 'string', 'description': 'Refresh token to blacklist'}
+                },
+                'required': ['refresh']
+            }
+        },
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Logout successful'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Refresh token required'),
+            401: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Invalid token'),
+        }
+    )
+    def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response({'error': 'Refresh token is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            token = OutstandingToken.objects.get(token=refresh_token)
+            BlacklistedToken.objects.create(token=token)
+            return Response({'message': 'Logout successful'})
+        except TokenError:
+            return Response({'error': 'Invalid or expired token'}, status=status.HTTP_401_UNAUTHORIZED)
+        except Exception:
+            return Response({'error': 'Token not found'}, status=status.HTTP_401_UNAUTHORIZED)
+
+
 class StatsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -263,7 +327,7 @@ class StatsView(APIView):
         tags=['Users'],
         summary='User statistics',
         description='Get detailed statistics for the authenticated user including ELO, XP, streaks, and win rate.',
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+        responses={200: OpenApiResponse(response=UserStatsSerializer)}
     )
     def get(self, request):
         user = request.user
@@ -293,7 +357,7 @@ class HistoryView(APIView):
         tags=['Users'],
         summary='Duel history',
         description='Get the last 20 finished duels for the authenticated user with results and scores.',
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+        responses={200: OpenApiResponse(response=MatchHistorySerializer(many=True))}
     )
     def get(self, request):
         user = request.user

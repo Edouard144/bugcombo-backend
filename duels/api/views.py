@@ -3,7 +3,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from duels.models import DuelRoom, Submission
-from .serializers import DuelRoomSerializer, SubmissionSerializer, MatchDetailSerializer
+from .serializers import DuelRoomSerializer, SubmissionSerializer, MatchDetailSerializer, DuelStatsSerializer, DuelRecentMatchSerializer
+from users.api.serializers import MatchHistorySerializer
 from duels.judge import judge_submissions
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -512,7 +513,11 @@ class DuelHistoryView(APIView):
         tags=['Duels'],
         summary='Duel history',
         description='Get the last 20 finished duels for the authenticated user with opponent, result, score, and language.',
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+        parameters=[
+            OpenApiParameter(name='limit', description='Max number of matches to return', required=False, type=int),
+            OpenApiParameter(name='offset', description='Number of matches to skip', required=False, type=int),
+        ],
+        responses={200: OpenApiResponse(response=MatchHistorySerializer(many=True))}
     )
     def get(self, request):
         rooms = list(DuelRoom.objects.select_related('creator', 'opponent').filter(
@@ -543,7 +548,7 @@ class DuelHistoryView(APIView):
                 'difficulty': room.difficulty,
                 'finished_at': room.finished_at,
             })
-        return Response(data)
+        return Response(MatchHistorySerializer(data, many=True).data)
 
 class InviteView(APIView):
     permission_classes = [IsAuthenticated]
@@ -609,7 +614,10 @@ class DuelStatsView(APIView):
         tags=['Duels'],
         summary='Duel statistics',
         description='Get detailed duel statistics for the authenticated user including win rate, streaks, and recent matches.',
-        responses={200: OpenApiResponse(response=OpenApiTypes.OBJECT)}
+        parameters=[
+            OpenApiParameter(name='limit', description='Max recent matches to include', required=False, type=int),
+        ],
+        responses={200: OpenApiResponse(response=DuelStatsSerializer)}
     )
     def get(self, request):
         user = request.user
@@ -645,7 +653,7 @@ class DuelStatsView(APIView):
                 'finished_at': room.finished_at,
             })
 
-        return Response({
+        return Response(DuelStatsSerializer({
             'total_duels': total,
             'wins': wins,
             'losses': losses,
@@ -653,4 +661,4 @@ class DuelStatsView(APIView):
             'current_streak': user.current_streak,
             'best_streak': user.best_streak,
             'recent_matches': recent,
-        })
+        }).data)

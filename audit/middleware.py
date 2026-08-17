@@ -1,5 +1,6 @@
 import json
 import logging
+from asgiref.sync import sync_to_async
 
 logger = logging.getLogger('audit')
 
@@ -12,11 +13,11 @@ class AuditMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
 
-    def __call__(self, request):
-        response = self.get_response(request)
+    async def __call__(self, request):
+        response = await self.get_response(request)
 
         if request.method in self.AUDIT_METHODS and request.path.startswith('/api/'):
-            self._log_audit(request, response)
+            await sync_to_sync(self._log_audit)(request, response)
 
         return response
 
