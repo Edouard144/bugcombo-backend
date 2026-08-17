@@ -180,10 +180,12 @@ def _normalize_origin(origin):
     return origin
 
 _CORS_ORIGINS = [_normalize_origin(o) for o in FRONTEND_URL.split(',')]
-CORS_ALLOWED_ORIGINS = [o for o in _CORS_ORIGINS if o]
+_CORS_ORIGINS = [o for o in _CORS_ORIGINS if o and o.startswith(('http://', 'https://'))]
+
+CORS_ALLOWED_ORIGINS = _CORS_ORIGINS
 CORS_ALLOW_CREDENTIALS = True
 
-CSRF_TRUSTED_ORIGINS = [o for o in _CORS_ORIGINS if o]
+CSRF_TRUSTED_ORIGINS = list(_CORS_ORIGINS)
 CSRF_TRUSTED_ORIGINS += ['https://*.onrender.com']
 
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
