@@ -170,11 +170,20 @@ SPECTACULAR_SETTINGS = {
 }
 
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173,http://localhost:8081,https://bugcomboo.onrender.com')
-CORS_ALLOWED_ORIGINS = [origin.strip() for origin in FRONTEND_URL.split(',') if origin.strip()]
+
+def _normalize_origin(origin):
+    origin = origin.strip()
+    if not origin:
+        return None
+    if not origin.startswith(('http://', 'https://')):
+        origin = 'https://' + origin
+    return origin
+
+_CORS_ORIGINS = [_normalize_origin(o) for o in FRONTEND_URL.split(',')]
+CORS_ALLOWED_ORIGINS = [o for o in _CORS_ORIGINS if o]
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = [
-    origin.strip() for origin in FRONTEND_URL.split(',') if origin.strip()
-]
+
+CSRF_TRUSTED_ORIGINS = [o for o in _CORS_ORIGINS if o]
 CSRF_TRUSTED_ORIGINS += ['https://*.onrender.com']
 
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
