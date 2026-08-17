@@ -150,6 +150,10 @@ class JoinDuelView(APIView):
             f'duel_{code}',
             {'type': 'room_update', 'status': 'active', 'code': code}
         )
+        async_to_sync(get_channel_layer_instance().group_send)(
+            f'duel_{code}',
+            {'type': 'opponent_update', 'action': 'joined', 'username': request.user.username}
+        )
         return Response({'ok': True})
 
 class DuelDetailView(APIView):
@@ -245,6 +249,10 @@ class SubmitCodeView(APIView):
                 user=other_player,
                 notification_type='opponent_submitted',
                 message=f'{request.user.username} submitted their code in room {code}'
+            )
+            async_to_sync(get_channel_layer_instance().group_send)(
+                f'duel_{code}',
+                {'type': 'opponent_submitted', 'username': request.user.username}
             )
             try:
                 result = judge_submissions(
@@ -355,7 +363,31 @@ class SubmitCodeView(APIView):
 
                 async_to_sync(get_channel_layer_instance().group_send)(
                     f'duel_{code}',
-                    {'type': 'duel_judged'}
+                    {
+                        'type': 'duel_judged',
+                        'winner': room.creator.username if winner == 'player1' else room.opponent.username if winner == 'player2' else None,
+                        'tie': winner == 'tie',
+                        'submissions': [
+                            {
+                                'player': room.creator.username,
+                                'score': p1['score'],
+                                'correctness': p1['correctness'],
+                                'cleanliness': p1['cleanliness'],
+                                'efficiency': p1['efficiency'],
+                                'security': p1['security'],
+                                'is_winner': winner == 'player1',
+                            },
+                            {
+                                'player': room.opponent.username,
+                                'score': p2['score'],
+                                'correctness': p2['correctness'],
+                                'cleanliness': p2['cleanliness'],
+                                'efficiency': p2['efficiency'],
+                                'security': p2['security'],
+                                'is_winner': winner == 'player2',
+                            },
+                        ]
+                    }
                 )
             except Exception as e:
                 room.status = 'finished'
@@ -499,9 +531,14 @@ class ForfeitView(APIView):
         room.save(update_fields=['status', 'finished_at'])
         invalidate_room_cache(code)
 
-        async_to_sync(channel_layer.group_send)(
+        async_to_sync(get_channel_layer_instance().group_send)(
             f'duel_{code}',
-            {'type': 'duel_judged'}
+            {
+                'type': 'duel_judged',
+                'winner': winner.username if winner else None,
+                'tie': False,
+                'submissions': []
+            }
         )
 
         return Response({'ok': True, 'winner': winner.username if winner else None})
