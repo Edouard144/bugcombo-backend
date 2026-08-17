@@ -1,7 +1,11 @@
 import json
+import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from duels.models import DuelRoom, Submission
+from notifications.services import send_notification
+
+logger = logging.getLogger('duels.websocket')
 
 
 class DuelConsumer(AsyncWebsocketConsumer):
@@ -32,70 +36,85 @@ class DuelConsumer(AsyncWebsocketConsumer):
         )
 
     async def receive(self, text_data):
-        data = json.loads(text_data)
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError:
+            return
+
         event_type = data.get('type')
 
         if event_type == 'room_status':
             room = await self.get_room(self.room_code)
             if room:
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {'type': 'room_update', 'status': room['status']}
-                )
+                await self.send(text_data=json.dumps({
+                    'type': 'room_status',
+                    'status': room['status'],
+                    'code': room['code'],
+                    'language': room['language'],
+                    'difficulty': room['difficulty'],
+                    'duration': room['duration'],
+                    'started_at': room['started_at'],
+                    'finished_at': room['finished_at'],
+                }))
 
         elif event_type == 'submitted':
             await self.channel_layer.group_send(
                 self.room_group_name,
-                {'type': 'player_submitted', 'player': data.get('player', '')}
+                {
+                    'type': 'submitted',
+                    'player': data.get('player', ''),
+                    'timestamp': data.get('timestamp')
+                }
             )
-
-        elif event_type == 'chat_message':
-            message = data.get('message', '').strip()
-            if message and len(message) <= 500:
-                msg_data = await self.save_chat_message(message)
-                if msg_data:
-                    await self.channel_layer.group_send(
-                        self.room_group_name,
-                        {
-                            'type': 'chat_broadcast',
-                            'message': msg_data['message'],
-                            'username': msg_data['username'],
-                            'sender_id': msg_data['sender_id'],
-                            'created_at': msg_data['created_at'],
-                        }
-                    )
 
     async def room_update(self, event):
         await self.send(text_data=json.dumps({
             'type': 'room_update',
-            'status': event['status']
+            'status': event['status'],
+            'code': event.get('code', self.room_code)
         }))
 
-    async def player_submitted(self, event):
+    async def submitted(self, event):
         await self.send(text_data=json.dumps({
-            'type': 'player_submitted',
-            'player': event['player']
+            'type': 'submitted',
+            'player': event['player'],
+            'timestamp': event.get('timestamp')
+        }))
+
+    async def opponent_update(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'opponent_update',
+            'action': event['action'],
+            'username': event['username']
+        }))
+
+    async def opponent_submitted(self, event):
+        await self.send(text_data=json.dumps({
+            'type': 'opponent_submitted',
+            'username': event['username']
         }))
 
     async def duel_judged(self, event):
         await self.send(text_data=json.dumps({
-            'type': 'duel_judged'
-        }))
-
-    async def chat_broadcast(self, event):
-        await self.send(text_data=json.dumps({
-            'type': 'chat_message',
-            'message': event['message'],
-            'username': event['username'],
-            'sender_id': event['sender_id'],
-            'created_at': event['created_at'],
+            'type': 'duel_judged',
+            'winner': event.get('winner'),
+            'score': event.get('score'),
+            'submissions': event.get('submissions', [])
         }))
 
     @database_sync_to_async
     def get_room(self, code):
         try:
-            room = DuelRoom.objects.get(code=code)
-            return {'status': room.status, 'code': room.code}
+            room = DuelRoom.objects.select_related('creator', 'opponent').get(code=code)
+            return {
+                'code': room.code,
+                'status': room.status,
+                'language': room.language,
+                'difficulty': room.difficulty,
+                'duration': room.duration,
+                'started_at': room.started_at.isoformat() if room.started_at else None,
+                'finished_at': room.finished_at.isoformat() if room.finished_at else None,
+            }
         except DuelRoom.DoesNotExist:
             return None
 
