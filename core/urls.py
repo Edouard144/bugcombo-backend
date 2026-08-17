@@ -5,6 +5,9 @@ from rest_framework.response import Response
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from drf_spectacular.utils import extend_schema, OpenApiTypes, OpenApiResponse
 from core.views import MetricsView
+import logging
+
+logger = logging.getLogger('core.startup')
 
 @extend_schema(
     tags=['Health'],
@@ -29,6 +32,7 @@ def health_check(request):
     except Exception as e:
         health['checks']['database'] = f'error: {str(e)}'
         health['status'] = 'degraded'
+        logger.error('Database health check failed: %s', e)
 
     try:
         from django.core.cache import cache
@@ -41,6 +45,7 @@ def health_check(request):
             health['status'] = 'degraded'
     except Exception as e:
         health['checks']['redis'] = f'error: {str(e)}'
+        logger.error('Redis health check failed: %s', e)
 
     return Response(health)
 

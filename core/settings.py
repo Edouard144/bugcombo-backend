@@ -100,6 +100,12 @@ if DATABASE_URL:
         },
     }
 
+if not DEBUG:
+    db = DATABASES['default']
+    missing = [k for k in ['NAME', 'USER', 'PASSWORD', 'HOST'] if not db.get(k)]
+    if missing:
+        logger.warning('Database config missing fields: %s', ', '.join(missing))
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -260,3 +266,7 @@ else:
     }
 
 from core.logging_config import LOGGING
+
+import logging
+logger = logging.getLogger('core.startup')
+logger.info('BugCombo settings loaded. DEBUG=%s, DATABASE_URL=%s', DEBUG, 'set' if DATABASE_URL else 'not set')
