@@ -13,6 +13,11 @@ class NotificationListView(APIView):
         tags=['Notifications'],
         summary='List notifications',
         description='Get all notifications for the authenticated user ordered by most recent first.',
+        parameters=[
+            OpenApiParameter(name='read', description='Filter by read status (true/false)', required=False, type=bool),
+            OpenApiParameter(name='page', description='Page number', required=False, type=int),
+            OpenApiParameter(name='limit', description='Items per page', required=False, type=int),
+        ],
         responses={200: OpenApiResponse(response=NotificationSerializer(many=True))}
     )
     def get(self, request):
