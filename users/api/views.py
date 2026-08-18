@@ -13,7 +13,8 @@ from django.utils import timezone
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from duels.models import DuelRoom, Submission
-from .serializers import RegisterSerializer, UserSerializer, UserUpdateSerializer, AuthResponseSerializer, ProfileStatsSerializer, ProfileResponseSerializer, UserStatsSerializer, MatchHistorySerializer, SeasonalLeaderboardEntrySerializer
+from users.models import FriendRequest, Activity
+from .serializers import RegisterSerializer, UserSerializer, UserUpdateSerializer, AuthResponseSerializer, ProfileStatsSerializer, ProfileResponseSerializer, UserStatsSerializer, MatchHistorySerializer, SeasonalLeaderboardEntrySerializer, FriendRequestSerializer, ActivitySerializer, FriendSerializer
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes, OpenApiResponse
 import hashlib
 
@@ -391,3 +392,203 @@ class HistoryView(APIView):
             })
 
         return Response(matches)
+
+
+class SendFriendRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Social'],
+        summary='Send friend request',
+        description='Send a friend request to another user by username.',
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'username': {'type': 'string', 'description': 'Username of the user to send request to'}
+                },
+                'required': ['username']
+            }
+        },
+        responses={
+            201: OpenApiResponse(response=FriendRequestSerializer, description='Friend request sent'),
+            400: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Invalid request'),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='User not found'),
+        }
+    )
+    def post(self, request):
+        username = request.data.get('username')
+        if not username:
+            return Response({'error': 'Username is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            to_user = User.objects.get(username=username)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if to_user == request.user:
+            return Response({'error': 'Cannot send friend request to yourself'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if request.user.friends.filter(id=to_user.id).exists():
+            return Response({'error': 'Already friends'}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing = FriendRequest.objects.filter(from_user=request.user, to_user=to_user).first()
+        if existing:
+            if existing.status == 'pending':
+                return Response({'error': 'Friend request already sent'}, status=status.HTTP_400_BAD_REQUEST)
+            elif existing.status == 'declined':
+                existing.status = 'pending'
+                existing.save()
+                serializer = FriendRequestSerializer(existing)
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        friend_request = FriendRequest.objects.create(from_user=request.user, to_user=to_user)
+        serializer = FriendRequestSerializer(friend_request)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class AcceptFriendRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Social'],
+        summary='Accept friend request',
+        description='Accept a pending friend request.',
+        parameters=[
+            OpenApiParameter(name='request_id', description='Friend request ID', required=True, type=int, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            200: OpenApiResponse(response=FriendRequestSerializer, description='Friend request accepted'),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Friend request not found'),
+        }
+    )
+    def post(self, request, request_id):
+        try:
+            friend_request = FriendRequest.objects.get(id=request_id, to_user=request.user, status='pending')
+        except FriendRequest.DoesNotExist:
+            return Response({'error': 'Friend request not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        friend_request.status = 'accepted'
+        friend_request.save()
+        request.user.friends.add(friend_request.from_user)
+        friend_request.from_user.friends.add(request.user)
+
+        Activity.objects.create(
+            user=request.user,
+            activity_type='friend_added',
+            metadata={'friend_id': friend_request.from_user.id, 'friend_username': friend_request.from_user.username}
+        )
+        Activity.objects.create(
+            user=friend_request.from_user,
+            activity_type='friend_added',
+            metadata={'friend_id': request.user.id, 'friend_username': request.user.username}
+        )
+
+        serializer = FriendRequestSerializer(friend_request)
+        return Response(serializer.data)
+
+
+class DeclineFriendRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Social'],
+        summary='Decline friend request',
+        description='Decline a pending friend request.',
+        parameters=[
+            OpenApiParameter(name='request_id', description='Friend request ID', required=True, type=int, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Friend request declined'),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Friend request not found'),
+        }
+    )
+    def post(self, request, request_id):
+        try:
+            friend_request = FriendRequest.objects.get(id=request_id, to_user=request.user, status='pending')
+        except FriendRequest.DoesNotExist:
+            return Response({'error': 'Friend request not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        friend_request.status = 'declined'
+        friend_request.save()
+        return Response({'ok': True})
+
+
+class FriendListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Social'],
+        summary='Friend list',
+        description='Get the list of friends for the authenticated user.',
+        responses={200: OpenApiResponse(response=FriendSerializer(many=True))}
+    )
+    def get(self, request):
+        friends = request.user.friends.all()
+        data = []
+        for friend in friends:
+            data.append({
+                'id': friend.id,
+                'username': friend.username,
+                'email': friend.email,
+                'bio': friend.bio,
+                'total_duels': friend.total_duels,
+                'wins': friend.wins,
+                'losses': friend.losses,
+                'xp': friend.xp,
+                'level': friend.level,
+                'elo': friend.elo,
+                'friendship_date': friend.profile.created_at if hasattr(friend, 'profile') else None,
+            })
+        return Response(data)
+
+
+class RemoveFriendView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Social'],
+        summary='Remove friend',
+        description='Remove a friend by user ID.',
+        parameters=[
+            OpenApiParameter(name='user_id', description='User ID', required=True, type=int, location=OpenApiParameter.PATH)
+        ],
+        responses={
+            200: OpenApiResponse(response=OpenApiTypes.OBJECT, description='Friend removed'),
+            404: OpenApiResponse(response=OpenApiTypes.OBJECT, description='User not found or not friends'),
+        }
+    )
+    def delete(self, request, user_id):
+        try:
+            friend = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not request.user.friends.filter(id=friend.id).exists():
+            return Response({'error': 'Not friends with this user'}, status=status.HTTP_404_NOT_FOUND)
+
+        request.user.friends.remove(friend)
+        friend.friends.remove(request.user)
+        return Response({'ok': True})
+
+
+class ActivityFeedView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=['Social'],
+        summary='Activity feed',
+        description='Get the activity feed for the authenticated user and their friends.',
+        parameters=[
+            OpenApiParameter(name='limit', description='Max activities to return', required=False, type=int),
+        ],
+        responses={200: OpenApiResponse(response=ActivitySerializer(many=True))}
+    )
+    def get(self, request):
+        limit = int(request.query_params.get('limit', 20))
+        friend_ids = request.user.friends.values_list('id', flat=True)
+        activities = Activity.objects.filter(
+            models.Q(user=request.user) | models.Q(user__in=friend_ids)
+        ).select_related('user')[:limit]
+        serializer = ActivitySerializer(activities, many=True)
+        return Response(serializer.data)

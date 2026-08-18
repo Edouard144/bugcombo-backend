@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from users.models import FriendRequest, Activity
 
 User = get_user_model()
 
@@ -79,3 +80,31 @@ class UserSerializer(serializers.ModelSerializer):
             'current_streak', 'best_streak', 'last_win_at', 'created_at',
             'xp', 'level', 'elo', 'games_played'
         ]
+
+class FriendRequestSerializer(serializers.ModelSerializer):
+    from_user = UserSerializer(read_only=True)
+    to_user = UserSerializer(read_only=True)
+
+    class Meta:
+        model = FriendRequest
+        fields = ['id', 'from_user', 'to_user', 'status', 'created_at', 'updated_at']
+
+class ActivitySerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+
+    class Meta:
+        model = Activity
+        fields = ['id', 'user', 'activity_type', 'metadata', 'created_at']
+
+class FriendSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+    email = serializers.EmailField()
+    bio = serializers.CharField()
+    total_duels = serializers.IntegerField()
+    wins = serializers.IntegerField()
+    losses = serializers.IntegerField()
+    xp = serializers.IntegerField()
+    level = serializers.IntegerField()
+    elo = serializers.IntegerField()
+    friendship_date = serializers.DateTimeField()

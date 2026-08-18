@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     'notifications',
     'achievements',
     'audit',
+    'tournaments',
 ]
 
 MIDDLEWARE = [

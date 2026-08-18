@@ -57,6 +57,7 @@ api_v1_patterns = [
     path('notifications/', include('notifications.api.urls')),
     path('achievements/', include('achievements.api.urls')),
     path('audit/', include('audit.api.urls')),
+    path('tournaments/', include('tournaments.urls')),
     path('metrics/', MetricsView.as_view(), name='metrics'),
 ]
 
