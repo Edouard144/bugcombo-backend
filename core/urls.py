@@ -62,6 +62,7 @@ api_v1_patterns = [
     path('practice/', include('practice.urls')),
     path('shop/', include('shop.urls')),
     path('replays/', include('replays.urls')),
+    path('guilds/', include('guilds.urls')),
     path('metrics/', MetricsView.as_view(), name='metrics'),
 ]
 
