@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'shop',
     'replays',
     'guilds',
+    'snippets',
 ]
 
 MIDDLEWARE = [
