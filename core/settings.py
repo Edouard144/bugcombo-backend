@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     'tournaments',
     'gamification',
     'practice',
+    'shop',
 ]
 
 MIDDLEWARE = [
