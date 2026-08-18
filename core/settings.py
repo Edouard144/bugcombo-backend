@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     'achievements',
     'audit',
     'tournaments',
+    'gamification',
 ]
 
 MIDDLEWARE = [
