@@ -62,17 +62,6 @@ class RegisterView(APIView):
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class MeView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(
-        tags=['Auth'],
-        summary='Get current user profile',
-        description='Retrieve the authenticated user profile information.',
-        responses={200: OpenApiResponse(response=UserSerializer)}
-    )
-    def get(self, request):
-        return Response(UserSerializer(request.user).data)
 
 class LeaderboardView(APIView):
     permission_classes = [AllowAny]
